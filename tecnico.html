@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>OT — Actualizar etapa</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  body{background:var(--bg-page);}
+  .wrap{max-width:480px;margin:0 auto;padding:20px 16px 60px;}
+  .head{background:var(--bg-header);color:#fff;padding:16px;border-radius:12px;margin-bottom:16px;}
+  .head .ot{font-family:var(--mono);font-size:20px;font-weight:700;}
+  .head .cliente{font-size:14px;color:#cfcdc7;margin-top:2px;}
+  .head .modelo{font-size:12.5px;color:#9c9a94;}
+  .stage-now{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;text-align:center;}
+  .stage-now .label{font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;}
+  .stage-now .value{font-size:19px;font-weight:600;margin-top:2px;}
+  .who{margin-bottom:16px;}
+  .who label{display:block;font-size:12px;color:var(--text-2);margin-bottom:6px;font-weight:600;}
+  .who select{width:100%;height:44px;font-size:15px;}
+  .big-actions{display:flex;flex-direction:column;gap:10px;}
+  .big-btn{width:100%;padding:16px;font-size:15px;font-weight:700;border-radius:10px;border:1px solid var(--border-strong);background:#fff;cursor:pointer;}
+  .big-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent-dark);}
+  .big-btn:active{transform:scale(0.98);}
+  .msg{text-align:center;font-size:13px;margin-top:14px;min-height:18px;}
+  .msg.ok{color:#0F5A38;}
+  .msg.error{color:var(--accent);}
+  .stage-list{margin-top:18px;}
+  .stage-list .label{font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;}
+  .stage-pill{display:block;width:100%;text-align:left;padding:12px 14px;border-radius:9px;border:1px solid var(--border);background:#fff;font-size:14px;margin-bottom:6px;cursor:pointer;}
+  .stage-pill.active{border:2px solid var(--accent);font-weight:700;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="loading" style="text-align:center;padding:40px 0;color:var(--text-2);">Cargando OT...</div>
+  <div id="content" style="display:none;">
+    <div class="head">
+      <div class="ot" id="v_ot"></div>
+      <div class="cliente" id="v_cliente"></div>
+      <div class="modelo" id="v_modelo"></div>
+    </div>
+
+    <div class="stage-now">
+      <div class="label">Etapa actual</div>
+      <div class="value" id="v_etapa"></div>
+    </div>
+
+    <div class="who">
+      <label>¿Quién está haciendo el cambio?</label>
+      <select id="actorSelect"><option value="">Selecciona tu nombre</option></select>
+    </div>
+
+    <div class="big-actions">
+      <button class="big-btn primary" id="advanceBtn">Avanzar a la siguiente etapa →</button>
+      <button class="big-btn" id="backBtn">← Volver a la etapa anterior</button>
+    </div>
+
+    <div class="stage-list">
+      <div class="label">O selecciona la etapa directamente</div>
+      <div id="stagePills"></div>
+    </div>
+
+    <div class="msg" id="msg"></div>
+  </div>
+  <div id="notFound" style="display:none;text-align:center;padding:40px 0;color:var(--text-2);">
+    Esta OT ya no existe o fue eliminada del tablero.
+  </div>
+</div>
+<script src="tecnico.js"></script>
+</body>
+</html>
