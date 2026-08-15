@@ -51,6 +51,8 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .card-days.warn{color:var(--accent);font-weight:700;}
 .card-cliente{font-size:13px;font-weight:600;margin:4px 0 1px;}
 .card-modelo{font-size:11.5px;color:var(--text-2);}
+.card-entrega{font-size:10.5px;color:var(--text-2);margin-top:4px;}
+.card-entrega.warn{color:var(--accent);font-weight:700;}
 .card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
 .card-suc{font-size:10px;color:var(--text-2);background:#F0EFEA;border-radius:5px;padding:2px 6px;}
 .card-move{display:flex;gap:4px;}

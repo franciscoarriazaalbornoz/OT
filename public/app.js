@@ -15,6 +15,16 @@ function daysSince(dateStr){
   const d = new Date(dateStr+"T00:00:00");
   return Math.floor((Date.now()-d.getTime())/86400000);
 }
+function formatEntrega(fechaEntregaStr, etapaIdx){
+  if(!fechaEntregaStr) return null;
+  const d = new Date(fechaEntregaStr);
+  if(isNaN(d.getTime())) return null;
+  const texto = "Entrega: " + d.toLocaleDateString("es-CL", { day:"2-digit", month:"2-digit" }) +
+    " " + d.toLocaleTimeString("es-CL", { hour:"2-digit", minute:"2-digit" });
+  const esUltimaEtapa = etapaIdx === STAGES.length - 1;
+  const vencida = !esUltimaEtapa && d.getTime() < Date.now();
+  return { texto, vencida };
+}
 async function api(path, opts={}){
   const res = await fetch(path, {
     method: opts.method || "GET",
@@ -141,6 +151,7 @@ function render(){
     items.sort((a,b)=> (a.prioridad==="alta"?0:1) - (b.prioridad==="alta"?0:1));
     items.forEach(o=>{
       const days = daysSince(o.fechaIngreso);
+      const entregaInfo = formatEntrega(o.fechaEntrega, idx);
       const card = document.createElement("div");
       card.className = "card" + (o.prioridad==="alta" ? " alta" : "");
       card.innerHTML = `
@@ -150,6 +161,7 @@ function render(){
         </div>
         <div class="card-cliente">${escapeHtml(o.cliente||"Sin cliente")}</div>
         <div class="card-modelo">${escapeHtml(o.modelo||"")} ${o.patente? "· "+escapeHtml(o.patente):""}</div>
+        ${entregaInfo ? `<div class="card-entrega${entregaInfo.vencida?" warn":""}">${entregaInfo.texto}</div>` : ""}
         <div class="card-foot">
           <span class="card-suc">${escapeHtml(o.sucursal||"—")}</span>
           <span class="card-move">
@@ -187,6 +199,7 @@ function openNew(){
   document.getElementById("formError").style.display = "none";
   ["f_numero","f_patente","f_cliente","f_modelo","f_responsable","f_notas"].forEach(id=>document.getElementById(id).value="");
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
+  document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
   document.getElementById("f_etapa").value = "0";
   document.getElementById("f_prioridad").value = "normal";
@@ -205,6 +218,7 @@ function openEdit(id){
   document.getElementById("f_numero").value = o.numero||"";
   document.getElementById("f_patente").value = o.patente||"";
   document.getElementById("f_fecha").value = o.fechaIngreso||"";
+  document.getElementById("f_fecha_entrega").value = o.fechaEntrega||"";
   document.getElementById("f_cliente").value = o.cliente||"";
   document.getElementById("f_modelo").value = o.modelo||"";
   document.getElementById("f_sucursal").value = o.sucursal||SUCURSALES[0];
@@ -227,6 +241,7 @@ async function saveForm(){
     numero,
     patente: document.getElementById("f_patente").value.trim(),
     fechaIngreso: document.getElementById("f_fecha").value,
+    fechaEntrega: document.getElementById("f_fecha_entrega").value,
     cliente: document.getElementById("f_cliente").value.trim(),
     modelo: document.getElementById("f_modelo").value.trim(),
     sucursal: document.getElementById("f_sucursal").value,
