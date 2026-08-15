@@ -31,6 +31,7 @@ function rowToOt(r) {
   return {
     id: r.id, numero: r.numero, patente: r.patente || "",
     fechaIngreso: r.fecha_ingreso ? new Date(r.fecha_ingreso).toISOString().slice(0,10) : "",
+    fechaEntrega: r.fecha_entrega ? new Date(r.fecha_entrega).toISOString().slice(0,16) : "",
     cliente: r.cliente || "", modelo: r.modelo || "", sucursal: r.sucursal || "",
     etapa: r.etapa, responsable: r.responsable || "", prioridad: r.prioridad || "normal",
     notas: r.notas || "", creadoPor: r.creado_por || "",
@@ -71,6 +72,8 @@ async function initDb() {
       updated_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+  // Migración: agrega la columna de fecha/hora de entrega si la tabla ya existía sin ella
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
   const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM users");
   if (rows[0].n === 0) {
     const hash = bcrypt.hashSync("summit2026", 10);
@@ -187,9 +190,9 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   const etapa = Number.isInteger(b.etapa) ? b.etapa : 0;
   const fecha = b.fechaIngreso || new Date().toISOString().slice(0, 10);
   await pool.query(
-    `INSERT INTO ots (id, numero, patente, fecha_ingreso, cliente, modelo, sucursal, etapa, responsable, prioridad, notas, creado_por, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())`,
-    [id, String(b.numero).trim(), b.patente || "", fecha, b.cliente || "", b.modelo || "",
+    `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, notas, creado_por, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())`,
+    [id, String(b.numero).trim(), b.patente || "", fecha, b.fechaEntrega || null, b.cliente || "", b.modelo || "",
      b.sucursal || SUCURSALES[0], etapa, b.responsable || "", b.prioridad === "alta" ? "alta" : "normal",
      b.notas || "", user ? user.nombre : ""]
   );
@@ -204,9 +207,9 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const b = req.body || {};
   const merged = { ...existing, ...b };
   await pool.query(
-    `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, cliente=$4, modelo=$5, sucursal=$6,
-     etapa=$7, responsable=$8, prioridad=$9, notas=$10, updated_at=now() WHERE id=$11`,
-    [merged.numero, merged.patente, merged.fechaIngreso || null, merged.cliente, merged.modelo,
+    `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, fecha_entrega=$4, cliente=$5, modelo=$6, sucursal=$7,
+     etapa=$8, responsable=$9, prioridad=$10, notas=$11, updated_at=now() WHERE id=$12`,
+    [merged.numero, merged.patente, merged.fechaIngreso || null, merged.fechaEntrega || null, merged.cliente, merged.modelo,
      merged.sucursal, merged.etapa, merged.responsable, merged.prioridad, merged.notas, req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
