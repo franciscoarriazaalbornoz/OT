@@ -38,6 +38,7 @@
     </div>
     <div class="topbar-controls">
       <button class="btn-ghost btn" id="usersBtn" style="display:none;">Usuarios</button>
+      <button class="btn-ghost btn" id="clienteQrBtn">QR para clientes</button>
       <button class="btn-ghost btn" id="refreshBtn">Actualizar</button>
       <button class="btn btn-primary" id="newBtn">+ Nueva OT</button>
       <button class="btn-ghost btn" id="logoutBtn">Salir</button>
@@ -79,6 +80,12 @@
     </div>
     <div class="field"><label>Fecha y hora de entrega (estimada)</label><input id="f_fecha_entrega" type="datetime-local"></div>
     <div class="field"><label>Notas</label><textarea id="f_notas" rows="3" placeholder="Observaciones..."></textarea></div>
+    <div class="field" id="fotosSection" style="display:none;">
+      <label>Fotos (máximo 4)</label>
+      <div class="fotos-grid" id="fotosGrid"></div>
+      <input type="file" id="fotoInput" accept="image/*" style="display:none;">
+      <button class="btn" id="addFotoBtn" type="button" style="margin-top:6px;">+ Agregar foto</button>
+    </div>
     <div class="modal-actions">
       <button class="danger-link" id="deleteBtn" style="display:none;">Eliminar OT</button>
       <div class="modal-actions-right">
