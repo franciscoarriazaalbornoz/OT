@@ -74,6 +74,15 @@ async function initDb() {
   `);
   // Migración: agrega la columna de fecha/hora de entrega si la tabla ya existía sin ella
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ot_fotos (
+      id TEXT PRIMARY KEY,
+      ot_id TEXT NOT NULL REFERENCES ots(id) ON DELETE CASCADE,
+      data_url TEXT NOT NULL,
+      creado_por TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
   const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM users");
   if (rows[0].n === 0) {
     const hash = bcrypt.hashSync("summit2026", 10);
@@ -87,7 +96,7 @@ async function initDb() {
 }
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "6mb" }));
 app.set("trust proxy", 1); // necesario en Render/Railway (detrás de proxy) para que la cookie de sesión funcione
 app.use(session({
   secret: process.env.SESSION_SECRET || "cambia-este-secreto-en-produccion",
@@ -221,6 +230,38 @@ app.delete("/api/ots/:id", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Fotos por OT (máximo 4) ---
+async function contarFotos(otId) {
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM ot_fotos WHERE ot_id=$1", [otId]);
+  return rows[0].n;
+}
+function rowToFoto(r) {
+  return { id: r.id, dataUrl: r.data_url, creadoPor: r.creado_por || "", createdAt: r.created_at };
+}
+
+app.get("/api/ots/:id/fotos", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM ot_fotos WHERE ot_id=$1 ORDER BY created_at", [req.params.id]);
+  res.json({ fotos: rows.map(rowToFoto) });
+});
+
+app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
+  const { dataUrl } = req.body || {};
+  if (!dataUrl) return res.status(400).json({ error: "Falta la imagen" });
+  if ((await contarFotos(req.params.id)) >= 4) return res.status(400).json({ error: "Ya hay 4 fotos en esta OT (máximo permitido)" });
+  const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+  const id = uid("foto");
+  await pool.query(
+    "INSERT INTO ot_fotos (id, ot_id, data_url, creado_por, created_at) VALUES ($1,$2,$3,$4,now())",
+    [id, req.params.id, dataUrl, urows[0] ? urows[0].nombre : ""]
+  );
+  res.json({ foto: { id, dataUrl } });
+});
+
+app.delete("/api/ots/:id/fotos/:fotoId", requireAuth, async (req, res) => {
+  await pool.query("DELETE FROM ot_fotos WHERE id=$1 AND ot_id=$2", [req.params.fotoId, req.params.id]);
+  res.json({ ok: true });
+});
+
 // --- Acceso por QR para técnicos (sin login, pensado para celular) ---
 app.get("/api/ots/:id/qr", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
@@ -238,7 +279,27 @@ app.get("/api/ots/:id/qr", requireAuth, async (req, res) => {
 app.get("/api/public/ot/:id", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
-  res.json({ ot: rowToOt(rows[0]), stages: STAGES });
+  const { rows: fotoRows } = await pool.query("SELECT * FROM ot_fotos WHERE ot_id=$1 ORDER BY created_at", [req.params.id]);
+  res.json({ ot: rowToOt(rows[0]), stages: STAGES, fotos: fotoRows.map(rowToFoto) });
+});
+
+app.post("/api/public/ot/:id/fotos", async (req, res) => {
+  const { rows } = await pool.query("SELECT id FROM ots WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
+  const { dataUrl, actorNombre } = req.body || {};
+  if (!dataUrl) return res.status(400).json({ error: "Falta la imagen" });
+  if ((await contarFotos(req.params.id)) >= 4) return res.status(400).json({ error: "Ya hay 4 fotos en esta OT (máximo permitido)" });
+  const id = uid("foto");
+  await pool.query(
+    "INSERT INTO ot_fotos (id, ot_id, data_url, creado_por, created_at) VALUES ($1,$2,$3,$4,now())",
+    [id, req.params.id, dataUrl, actorNombre || ""]
+  );
+  res.json({ foto: { id, dataUrl } });
+});
+
+app.delete("/api/public/ot/:id/fotos/:fotoId", async (req, res) => {
+  await pool.query("DELETE FROM ot_fotos WHERE id=$1 AND ot_id=$2", [req.params.fotoId, req.params.id]);
+  res.json({ ok: true });
 });
 
 app.get("/api/public/roster", async (req, res) => {
@@ -257,6 +318,38 @@ app.put("/api/public/ot/:id/stage", async (req, res) => {
   const { rows: updatedRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updatedRows[0]), stages: STAGES });
 });
+
+app.get("/api/public/consulta", async (req, res) => {
+  const patente = (req.query.patente || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!patente) return res.status(400).json({ error: "Ingresa tu patente" });
+  const { rows } = await pool.query(
+    "SELECT * FROM ots WHERE UPPER(REPLACE(patente,' ','')) = $1 ORDER BY updated_at DESC LIMIT 1",
+    [patente]
+  );
+  if (!rows[0]) return res.status(404).json({ error: "No encontramos una orden de trabajo activa con esa patente" });
+  const ot = rowToOt(rows[0]);
+  const { rows: fotoRows } = await pool.query("SELECT data_url FROM ot_fotos WHERE ot_id=$1 ORDER BY created_at", [ot.id]);
+  res.json({
+    ot: {
+      numero: ot.numero, modelo: ot.modelo, patente: ot.patente,
+      sucursal: ot.sucursal, etapa: ot.etapa, fechaEntrega: ot.fechaEntrega, updatedAt: ot.updatedAt
+    },
+    fotos: fotoRows.map(r => r.data_url),
+    stages: STAGES
+  });
+});
+
+app.get("/api/qr/consulta", requireAuth, async (req, res) => {
+  const url = `${req.protocol}://${req.get("host")}/consulta`;
+  try {
+    const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 280 });
+    res.json({ dataUrl, url });
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo generar el código QR" });
+  }
+});
+
+app.get("/consulta", (req, res) => { res.sendFile(path.join(__dirname, "public", "consulta.html")); });
 
 app.get("/t/:id", (req, res) => { res.sendFile(path.join(__dirname, "public", "tecnico.html")); });
 
