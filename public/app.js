@@ -111,7 +111,63 @@ function populateSelect(el, items, placeholder){
   items.forEach(i=>{ const o=document.createElement("option"); o.value=i; o.textContent=i; el.appendChild(o); });
 }
 
-async function loadOTs(){
+function resizeImageFile(file, maxWidth=1000, quality=0.72){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if(w > maxWidth){ h = Math.round(h * maxWidth/w); w = maxWidth; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => reject(new Error("No se pudo leer la imagen"));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function loadFotos(){
+  if(!editingId) return;
+  try{
+    const data = await api(`/api/ots/${editingId}/fotos`);
+    renderFotos(data.fotos);
+  }catch(e){ console.error(e); }
+}
+
+function renderFotos(fotos){
+  const grid = document.getElementById("fotosGrid");
+  grid.innerHTML = fotos.map(f => `
+    <div class="foto-thumb">
+      <img src="${f.dataUrl}">
+      <button class="del" data-foto="${f.id}" title="Eliminar">✕</button>
+    </div>
+  `).join("");
+  grid.querySelectorAll("[data-foto]").forEach(b=>b.addEventListener("click", ()=>deleteFoto(b.dataset.foto)));
+  document.getElementById("addFotoBtn").style.display = fotos.length >= 4 ? "none" : "inline-block";
+}
+
+async function addFoto(file){
+  if(!editingId) return;
+  try{
+    const dataUrl = await resizeImageFile(file);
+    await api(`/api/ots/${editingId}/fotos`, { method:"POST", body:{ dataUrl } });
+    loadFotos();
+  }catch(e){ alert(e.message); }
+}
+
+async function deleteFoto(fotoId){
+  if(!editingId) return;
+  try{
+    await api(`/api/ots/${editingId}/fotos/${fotoId}`, { method:"DELETE" });
+    loadFotos();
+  }catch(e){ alert(e.message); }
+}
   try{
     const data = await api("/api/ots");
     ots = data.ots;
@@ -203,6 +259,7 @@ function openNew(){
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
   document.getElementById("f_etapa").value = "0";
   document.getElementById("f_prioridad").value = "normal";
+  document.getElementById("fotosSection").style.display = "none";
   document.getElementById("overlay").classList.add("show");
   document.getElementById("f_numero").focus();
 }
@@ -226,6 +283,9 @@ function openEdit(id){
   document.getElementById("f_responsable").value = o.responsable||"";
   document.getElementById("f_prioridad").value = o.prioridad||"normal";
   document.getElementById("f_notas").value = o.notas||"";
+  document.getElementById("fotosSection").style.display = "block";
+  document.getElementById("fotosGrid").innerHTML = "";
+  loadFotos();
   document.getElementById("overlay").classList.add("show");
 }
 
@@ -331,6 +391,14 @@ async function openQr(){
     document.getElementById("qrOverlay").classList.add("show");
   }catch(e){ alert(e.message); }
 }
+async function openClienteQr(){
+  try{
+    const data = await api("/api/qr/consulta");
+    document.getElementById("qrTitle").textContent = "QR para consulta de clientes";
+    document.getElementById("qrImg").src = data.dataUrl;
+    document.getElementById("qrOverlay").classList.add("show");
+  }catch(e){ alert(e.message); }
+}
 function printQr(){
   const img = document.getElementById("qrImg").src;
   const title = document.getElementById("qrTitle").textContent;
@@ -366,5 +434,12 @@ document.getElementById("createUserBtn").addEventListener("click", createUser);
 document.getElementById("qrBtn").addEventListener("click", openQr);
 document.getElementById("qrCloseBtn").addEventListener("click", ()=>document.getElementById("qrOverlay").classList.remove("show"));
 document.getElementById("qrPrintBtn").addEventListener("click", printQr);
+document.getElementById("clienteQrBtn").addEventListener("click", openClienteQr);
+document.getElementById("addFotoBtn").addEventListener("click", ()=>document.getElementById("fotoInput").click());
+document.getElementById("fotoInput").addEventListener("change", (e)=>{
+  const file = e.target.files[0];
+  if(file) addFoto(file);
+  e.target.value = "";
+});
 
 tryResumeSession();
