@@ -339,6 +339,30 @@ app.get("/api/public/consulta", async (req, res) => {
   });
 });
 
+app.get("/api/public/buscar", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  if (!q) return res.json({ resultados: [] });
+  const { rows } = await pool.query(
+    `SELECT id, numero, patente, cliente, modelo, etapa FROM ots
+     WHERE UPPER(patente) LIKE UPPER($1) OR UPPER(numero) LIKE UPPER($1)
+     ORDER BY updated_at DESC LIMIT 8`,
+    [`%${q}%`]
+  );
+  res.json({ resultados: rows, stages: STAGES });
+});
+
+app.get("/taller", (req, res) => { res.sendFile(path.join(__dirname, "public", "buscar.html")); });
+
+app.get("/api/qr/taller", requireAuth, async (req, res) => {
+  const url = `${req.protocol}://${req.get("host")}/taller`;
+  try {
+    const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 280 });
+    res.json({ dataUrl, url });
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo generar el código QR" });
+  }
+});
+
 app.get("/api/qr/consulta", requireAuth, async (req, res) => {
   const url = `${req.protocol}://${req.get("host")}/consulta`;
   try {
