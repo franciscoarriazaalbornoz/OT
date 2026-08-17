@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Buscar OT</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body{background:var(--bg-page);}
+  .wrap{max-width:460px;margin:0 auto;padding:24px 16px 60px;}
+  .head{text-align:center;margin-bottom:20px;}
+  .head h1{font-size:19px;margin:0 0 4px;}
+  .head p{font-size:13px;color:var(--text-2);margin:0;}
+  .search-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+  .search-box label{display:block;font-size:12px;color:var(--text-2);margin-bottom:6px;font-weight:600;}
+  .search-row{display:flex;gap:8px;}
+  .search-row input{flex:1;height:48px;font-size:16px;text-transform:uppercase;font-family:var(--mono);}
+  .search-row button{height:48px;padding:0 18px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-weight:700;font-size:14px;cursor:pointer;}
+  .msg{text-align:center;font-size:13px;margin-top:10px;}
+  .msg.error{color:var(--accent);}
+
+  .resultado{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer;}
+  .resultado:active{background:#E2E0D8;}
+  .resultado .top{display:flex;justify-content:space-between;align-items:baseline;}
+  .resultado .ot{font-family:var(--mono);font-size:13px;font-weight:700;}
+  .resultado .etapa{font-size:11px;color:#fff;background:var(--accent);border-radius:12px;padding:2px 9px;}
+  .resultado .cliente{font-size:13.5px;font-weight:600;margin-top:3px;}
+  .resultado .modelo{font-size:12px;color:var(--text-2);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Buscar orden de trabajo</h1>
+    <p>Escribe la patente o el número de OT</p>
+  </div>
+
+  <div class="search-box">
+    <label>Patente o N° de OT</label>
+    <div class="search-row">
+      <input id="qInput" placeholder="AB1234 o 45213" autofocus>
+      <button id="buscarBtn">Buscar</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div id="resultados"></div>
+</div>
+<script src="/buscar.js"></script>
+</body>
+</html>
