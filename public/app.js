@@ -168,6 +168,7 @@ async function deleteFoto(fotoId){
     loadFotos();
   }catch(e){ alert(e.message); }
 }
+async function loadOTs(){
   try{
     const data = await api("/api/ots");
     ots = data.ots;
