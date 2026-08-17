@@ -400,6 +400,14 @@ async function openClienteQr(){
     document.getElementById("qrOverlay").classList.add("show");
   }catch(e){ alert(e.message); }
 }
+async function openTallerQr(){
+  try{
+    const data = await api("/api/qr/taller");
+    document.getElementById("qrTitle").textContent = "QR único de taller (técnicos y lavado)";
+    document.getElementById("qrImg").src = data.dataUrl;
+    document.getElementById("qrOverlay").classList.add("show");
+  }catch(e){ alert(e.message); }
+}
 function printQr(){
   const img = document.getElementById("qrImg").src;
   const title = document.getElementById("qrTitle").textContent;
@@ -436,6 +444,7 @@ document.getElementById("qrBtn").addEventListener("click", openQr);
 document.getElementById("qrCloseBtn").addEventListener("click", ()=>document.getElementById("qrOverlay").classList.remove("show"));
 document.getElementById("qrPrintBtn").addEventListener("click", printQr);
 document.getElementById("clienteQrBtn").addEventListener("click", openClienteQr);
+document.getElementById("tallerQrBtn").addEventListener("click", openTallerQr);
 document.getElementById("addFotoBtn").addEventListener("click", ()=>document.getElementById("fotoInput").click());
 document.getElementById("fotoInput").addEventListener("change", (e)=>{
   const file = e.target.files[0];
