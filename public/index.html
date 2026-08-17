@@ -52,8 +52,10 @@
       <option value="">Toda prioridad</option>
       <option value="alta">Solo prioridad alta</option>
     </select>
+    <select id="filterTipo"><option value="">Todo tipo de trabajo</option></select>
     <div class="count" id="totalCount"></div>
   </div>
+  <div class="legend" id="legend"></div>
 
   <div class="board" id="board"></div>
 </div>
@@ -69,6 +71,7 @@
     </div>
     <div class="field"><label>Cliente</label><input id="f_cliente" placeholder="Nombre del cliente"></div>
     <div class="field"><label>Modelo / vehículo</label><input id="f_modelo" placeholder="Ej: Toyota Corolla 2021"></div>
+    <div class="field"><label>Tipo de trabajo</label><select id="f_tipo"></select></div>
     <div class="grid2">
       <div class="field"><label>Sucursal</label><select id="f_sucursal"></select></div>
       <div class="field"><label>Etapa</label><select id="f_etapa"></select></div>

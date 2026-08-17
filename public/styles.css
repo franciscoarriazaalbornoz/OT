@@ -44,7 +44,6 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 
 .card{background:var(--card);border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:8px;cursor:pointer;border-left:4px solid var(--border-strong);}
 .card:hover{border-color:var(--border-strong);box-shadow:0 1px 4px rgba(0,0,0,.06);}
-.card.alta{border-left-color:var(--accent);}
 .card-top{display:flex;justify-content:space-between;align-items:baseline;}
 .card-ot{font-family:var(--mono);font-size:12.5px;font-weight:700;}
 .card-days{font-size:10.5px;color:var(--text-3);}
@@ -53,6 +52,12 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .card-modelo{font-size:11.5px;color:var(--text-2);}
 .card-entrega{font-size:10.5px;color:var(--text-2);margin-top:4px;}
 .card-entrega.warn{color:var(--accent);font-weight:700;}
+.card-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}
+.chip-tipo{font-size:9.5px;font-weight:700;color:#fff;border-radius:5px;padding:2px 7px;}
+.chip-alta{font-size:9.5px;font-weight:700;color:var(--accent);background:#FBE6E6;border-radius:5px;padding:2px 7px;}
+.legend{display:flex;gap:14px;flex-wrap:wrap;padding:0 24px 12px;}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-2);}
+.legend-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;}
 .card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
 .card-suc{font-size:10px;color:var(--text-2);background:#F0EFEA;border-radius:5px;padding:2px 6px;}
 .card-move{display:flex;gap:4px;}

@@ -1,11 +1,13 @@
 let STAGES = [];
 let SUCURSALES = [];
 let ROLES = [];
+let TIPOS = [];
 let currentUser = null;
 let ots = [];
 let editingId = null;
 
 const STAGE_COLORS = ["#6B7280","#8A7A5C","#B08900","#1D6FA5","#EB0A1E","#6B4FA0","#2E8FA6","#1E8A5F"];
+function tipoInfo(value){ return TIPOS.find(t=>t.value===value) || null; }
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -65,7 +67,7 @@ async function doLogin(){
 
 function onLogin(data){
   currentUser = data.user;
-  STAGES = data.stages; SUCURSALES = data.sucursales; ROLES = data.roles;
+  STAGES = data.stages; SUCURSALES = data.sucursales; ROLES = data.roles; TIPOS = data.tipos || [];
   hide("loginScreen");
   if(currentUser.mustChangePassword){
     show("changePwScreen");
@@ -97,12 +99,25 @@ function enterApp(){
   document.getElementById("f_etapa").innerHTML = STAGES.map((s,i)=>`<option value="${i}">${s}</option>`).join("");
   populateSelect(document.getElementById("f_sucursal"), SUCURSALES);
   populateSelect(document.getElementById("filterSucursal"), SUCURSALES, "Todas las sucursales");
+  const fTipo = document.getElementById("f_tipo");
+  fTipo.innerHTML = TIPOS.map(t=>`<option value="${t.value}">${t.label}</option>`).join("");
+  const filterTipo = document.getElementById("filterTipo");
+  filterTipo.innerHTML = `<option value="">Todo tipo de trabajo</option>` + TIPOS.map(t=>`<option value="${t.value}">${t.label}</option>`).join("");
+  renderLegend();
   populateSelect(document.getElementById("nu_rol"), ROLES);
   populateSelect(document.getElementById("nu_sucursal"), SUCURSALES);
   show("appScreen");
   document.getElementById("appScreen").style.display = "block";
   loadOTs();
   setInterval(loadOTs, 12000);
+}
+
+function renderLegend(){
+  const legend = document.getElementById("legend");
+  if(!legend) return;
+  legend.innerHTML = TIPOS.map(t => `
+    <span class="legend-item"><span class="legend-dot" style="background:#${t.color}"></span>${escapeHtml(t.label)}</span>
+  `).join("");
 }
 
 function populateSelect(el, items, placeholder){
@@ -182,7 +197,8 @@ async function loadOTs(){
 function filteredOTs(){
   const suc = document.getElementById("filterSucursal").value;
   const pri = document.getElementById("filterPrioridad").value;
-  return ots.filter(o => (!suc || o.sucursal===suc) && (!pri || o.prioridad===pri));
+  const tipo = document.getElementById("filterTipo").value;
+  return ots.filter(o => (!suc || o.sucursal===suc) && (!pri || o.prioridad===pri) && (!tipo || o.tipo===tipo));
 }
 
 function render(){
@@ -209,8 +225,10 @@ function render(){
     items.forEach(o=>{
       const days = daysSince(o.fechaIngreso);
       const entregaInfo = formatEntrega(o.fechaEntrega, idx);
+      const tipo = tipoInfo(o.tipo);
       const card = document.createElement("div");
-      card.className = "card" + (o.prioridad==="alta" ? " alta" : "");
+      card.className = "card";
+      card.style.borderLeftColor = tipo ? "#"+tipo.color : "var(--border-strong)";
       card.innerHTML = `
         <div class="card-top">
           <span class="card-ot">OT ${escapeHtml(o.numero||"—")}</span>
@@ -219,6 +237,10 @@ function render(){
         <div class="card-cliente">${escapeHtml(o.cliente||"Sin cliente")}</div>
         <div class="card-modelo">${escapeHtml(o.modelo||"")} ${o.patente? "· "+escapeHtml(o.patente):""}</div>
         ${entregaInfo ? `<div class="card-entrega${entregaInfo.vencida?" warn":""}">${entregaInfo.texto}</div>` : ""}
+        <div class="card-chips">
+          ${tipo ? `<span class="chip-tipo" style="background:#${tipo.color}">${escapeHtml(tipo.label)}</span>` : ""}
+          ${o.prioridad==="alta" ? `<span class="chip-alta">Alta</span>` : ""}
+        </div>
         <div class="card-foot">
           <span class="card-suc">${escapeHtml(o.sucursal||"—")}</span>
           <span class="card-move">
@@ -260,6 +282,7 @@ function openNew(){
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
   document.getElementById("f_etapa").value = "0";
   document.getElementById("f_prioridad").value = "normal";
+  document.getElementById("f_tipo").value = "general";
   document.getElementById("fotosSection").style.display = "none";
   document.getElementById("overlay").classList.add("show");
   document.getElementById("f_numero").focus();
@@ -283,6 +306,7 @@ function openEdit(id){
   document.getElementById("f_etapa").value = String(o.etapa||0);
   document.getElementById("f_responsable").value = o.responsable||"";
   document.getElementById("f_prioridad").value = o.prioridad||"normal";
+  document.getElementById("f_tipo").value = o.tipo||"";
   document.getElementById("f_notas").value = o.notas||"";
   document.getElementById("fotosSection").style.display = "block";
   document.getElementById("fotosGrid").innerHTML = "";
@@ -309,6 +333,7 @@ async function saveForm(){
     etapa: parseInt(document.getElementById("f_etapa").value,10),
     responsable: document.getElementById("f_responsable").value.trim(),
     prioridad: document.getElementById("f_prioridad").value,
+    tipo: document.getElementById("f_tipo").value,
     notas: document.getElementById("f_notas").value.trim()
   };
 
@@ -436,6 +461,7 @@ document.getElementById("overlay").addEventListener("click",(e)=>{ if(e.target.i
 document.getElementById("refreshBtn").addEventListener("click", loadOTs);
 document.getElementById("filterSucursal").addEventListener("change", render);
 document.getElementById("filterPrioridad").addEventListener("change", render);
+document.getElementById("filterTipo").addEventListener("change", render);
 document.getElementById("logoutBtn").addEventListener("click", async ()=>{ await api("/api/logout", {method:"POST"}); location.reload(); });
 document.getElementById("usersBtn").addEventListener("click", openUsers);
 document.getElementById("usersCloseBtn").addEventListener("click", ()=>document.getElementById("usersOverlay").classList.remove("show"));
