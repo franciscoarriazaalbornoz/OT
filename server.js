@@ -19,6 +19,13 @@ const pool = new Pool({
 const STAGES = ["Recepción","Diagnóstico","Presupuesto/Aprobación","Repuestos","Reparación","Control de calidad","Lavado","Entrega"];
 const SUCURSALES = ["Summit Colón","Rancagua","Matta","Antofagasta","Calama"];
 const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador"];
+const TIPOS_TRABAJO = [
+  { value: "mantencion", label: "Mantención", color: "EB0A1E" },
+  { value: "general", label: "Trabajo general", color: "E8B400" },
+  { value: "dyp", label: "DyP", color: "6B4FA0" },
+  { value: "fir", label: "FIR", color: "181818" },
+  { value: "garantia", label: "Garantía / Campaña / Primer servicio", color: "1E8A5F" },
+];
 
 function rowToUser(r) {
   return {
@@ -34,6 +41,7 @@ function rowToOt(r) {
     fechaEntrega: r.fecha_entrega ? new Date(r.fecha_entrega).toISOString().slice(0,16) : "",
     cliente: r.cliente || "", modelo: r.modelo || "", sucursal: r.sucursal || "",
     etapa: r.etapa, responsable: r.responsable || "", prioridad: r.prioridad || "normal",
+    tipo: r.tipo || "general",
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
   };
@@ -74,6 +82,7 @@ async function initDb() {
   `);
   // Migración: agrega la columna de fecha/hora de entrega si la tabla ya existía sin ella
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'general';`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ot_fotos (
       id TEXT PRIMARY KEY,
@@ -136,7 +145,7 @@ app.post("/api/logout", (req, res) => { req.session.destroy(() => res.json({ ok:
 app.get("/api/me", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   if (!rows[0]) return res.status(401).json({ error: "No autenticado" });
-  res.json({ user: publicUser(rowToUser(rows[0])), stages: STAGES, sucursales: SUCURSALES, roles: ROLES });
+  res.json({ user: publicUser(rowToUser(rows[0])), stages: STAGES, sucursales: SUCURSALES, roles: ROLES, tipos: TIPOS_TRABAJO });
 });
 
 app.post("/api/change-password", requireAuth, async (req, res) => {
@@ -199,10 +208,11 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   const etapa = Number.isInteger(b.etapa) ? b.etapa : 0;
   const fecha = b.fechaIngreso || new Date().toISOString().slice(0, 10);
   await pool.query(
-    `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, notas, creado_por, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())`,
+    `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, tipo, notas, creado_por, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`,
     [id, String(b.numero).trim(), b.patente || "", fecha, b.fechaEntrega || null, b.cliente || "", b.modelo || "",
      b.sucursal || SUCURSALES[0], etapa, b.responsable || "", b.prioridad === "alta" ? "alta" : "normal",
+     TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
      b.notas || "", user ? user.nombre : ""]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [id]);
@@ -217,9 +227,11 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const merged = { ...existing, ...b };
   await pool.query(
     `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, fecha_entrega=$4, cliente=$5, modelo=$6, sucursal=$7,
-     etapa=$8, responsable=$9, prioridad=$10, notas=$11, updated_at=now() WHERE id=$12`,
+     etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, updated_at=now() WHERE id=$13`,
     [merged.numero, merged.patente, merged.fechaIngreso || null, merged.fechaEntrega || null, merged.cliente, merged.modelo,
-     merged.sucursal, merged.etapa, merged.responsable, merged.prioridad, merged.notas, req.params.id]
+     merged.sucursal, merged.etapa, merged.responsable, merged.prioridad,
+     TIPOS_TRABAJO.some(t=>t.value===merged.tipo) ? merged.tipo : "general",
+     merged.notas, req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(rows[0]) });
@@ -280,7 +292,7 @@ app.get("/api/public/ot/:id", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
   const { rows: fotoRows } = await pool.query("SELECT * FROM ot_fotos WHERE ot_id=$1 ORDER BY created_at", [req.params.id]);
-  res.json({ ot: rowToOt(rows[0]), stages: STAGES, fotos: fotoRows.map(rowToFoto) });
+  res.json({ ot: rowToOt(rows[0]), stages: STAGES, tipos: TIPOS_TRABAJO, fotos: fotoRows.map(rowToFoto) });
 });
 
 app.post("/api/public/ot/:id/fotos", async (req, res) => {
@@ -348,7 +360,7 @@ app.get("/api/public/buscar", async (req, res) => {
      ORDER BY updated_at DESC LIMIT 8`,
     [`%${q}%`]
   );
-  res.json({ resultados: rows, stages: STAGES });
+  res.json({ resultados: rows, stages: STAGES, tipos: TIPOS_TRABAJO });
 });
 
 app.get("/taller", (req, res) => { res.sendFile(path.join(__dirname, "public", "buscar.html")); });
