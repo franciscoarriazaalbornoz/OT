@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const path = require("path");
 const { Pool } = require("pg");
 const QRCode = require("qrcode");
+const XLSX = require("xlsx");
 
 if (!process.env.DATABASE_URL) {
   console.error("Falta la variable de entorno DATABASE_URL (cadena de conexión a Postgres).");
@@ -90,6 +91,12 @@ async function initDb() {
   // Migración: agrega la columna de fecha/hora de entrega si la tabla ya existía sin ella
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'general';`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS etapa_historial (
       id TEXT PRIMARY KEY,
@@ -322,6 +329,176 @@ function rowToCita(r) {
     notas: r.notas || "", creadoPor: r.creado_por || "", otId: r.ot_id || null
   };
 }
+
+// --- Sincronización de citas desde un Excel compartido (OneDrive/SharePoint) ---
+
+function normalizarHeader(h) {
+  return String(h || "").toLowerCase().trim()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // quita tildes
+}
+
+const HEADER_ALIASES = {
+  fecha: ["fecha"],
+  hora: ["hora"],
+  fechaHora: ["fechahora", "fecha y hora", "fecha/hora"],
+  patente: ["patente", "placa"],
+  cliente: ["cliente", "nombre", "nombre cliente"],
+  telefono: ["telefono", "fono", "celular", "contacto"],
+  modelo: ["modelo", "vehiculo", "auto"],
+  sucursal: ["sucursal"],
+  tipo: ["tipo", "tipo de trabajo", "tipotrabajo"],
+  notas: ["notas", "observaciones", "comentarios"]
+};
+
+function mapearColumnas(headerRow) {
+  const map = {};
+  headerRow.forEach((raw, idx) => {
+    const norm = normalizarHeader(raw);
+    for (const [campo, alias] of Object.entries(HEADER_ALIASES)) {
+      if (alias.includes(norm) && map[campo] === undefined) map[campo] = idx;
+    }
+  });
+  return map;
+}
+
+function excelDateToJSDate(v) {
+  // xlsx con cellDates:true ya entrega Date de JS para celdas de fecha reales.
+  if (v instanceof Date) return v;
+  if (typeof v === "string" && v.trim()) {
+    const d = new Date(v);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+function excelHoraToHHMM(v) {
+  if (v instanceof Date) {
+    return String(v.getHours()).padStart(2,"0") + ":" + String(v.getMinutes()).padStart(2,"0");
+  }
+  if (typeof v === "number") { // fracción de día
+    const totalMin = Math.round(v * 24 * 60);
+    return String(Math.floor(totalMin/60)).padStart(2,"0") + ":" + String(totalMin%60).padStart(2,"0");
+  }
+  if (typeof v === "string" && /^\d{1,2}:\d{2}/.test(v.trim())) return v.trim().slice(0,5);
+  return null;
+}
+
+function toDirectDownloadUrl(url) {
+  // Convierte un link de OneDrive/SharePoint "para compartir" en uno de descarga directa.
+  if (/1drv\.ms|onedrive\.live\.com/i.test(url)) {
+    if (/[?&]download=1/.test(url)) return url;
+    return url + (url.includes("?") ? "&" : "?") + "download=1";
+  }
+  if (/sharepoint\.com/i.test(url)) {
+    if (/[?&]download=1/.test(url)) return url;
+    return url + (url.includes("?") ? "&" : "?") + "download=1";
+  }
+  return url;
+}
+
+async function descargarYParsearExcel(url) {
+  const directUrl = toDirectDownloadUrl(url);
+  const res = await fetch(directUrl, { redirect: "follow" });
+  if (!res.ok) throw new Error(`No se pudo descargar el archivo (HTTP ${res.status}). Verifica que el link sea público ("cualquiera con el link puede ver").`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+  if (rows.length < 2) return { citas: [], errores: ["El archivo no tiene filas de datos."] };
+
+  const colMap = mapearColumnas(rows[0]);
+  const citas = [];
+  const errores = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every(c => c === "" || c === null || c === undefined)) continue;
+    const get = (campo) => colMap[campo] !== undefined ? row[colMap[campo]] : "";
+
+    let fechaHoraISO = null;
+    if (colMap.fechaHora !== undefined) {
+      const d = excelDateToJSDate(get("fechaHora"));
+      if (d) fechaHoraISO = d.toISOString();
+    } else if (colMap.fecha !== undefined) {
+      const fechaD = excelDateToJSDate(get("fecha"));
+      const horaStr = colMap.hora !== undefined ? excelHoraToHHMM(get("hora")) : "09:00";
+      if (fechaD && horaStr) {
+        const [hh, mm] = horaStr.split(":").map(Number);
+        const combinado = new Date(fechaD.getFullYear(), fechaD.getMonth(), fechaD.getDate(), hh, mm, 0);
+        fechaHoraISO = combinado.toISOString();
+      }
+    }
+
+    if (!fechaHoraISO) { errores.push(`Fila ${i+1}: no se pudo interpretar la fecha/hora.`); continue; }
+
+    citas.push({
+      fechaHora: fechaHoraISO,
+      patente: String(get("patente") || "").trim(),
+      cliente: String(get("cliente") || "").trim(),
+      telefono: String(get("telefono") || "").trim(),
+      modelo: String(get("modelo") || "").trim(),
+      sucursal: String(get("sucursal") || "").trim(),
+      tipo: TIPOS_TRABAJO.some(t => t.value === normalizarHeader(get("tipo"))) ? normalizarHeader(get("tipo")) : "general",
+      notas: String(get("notas") || "").trim()
+    });
+  }
+  return { citas, errores, columnasDetectadas: Object.keys(colMap) };
+}
+
+app.get("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='citas_excel_url'");
+  res.json({ url: rows[0] ? rows[0].value : "" });
+});
+
+app.put("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
+  const { url } = req.body || {};
+  await pool.query(
+    `INSERT INTO app_settings (key, value) VALUES ('citas_excel_url', $1)
+     ON CONFLICT (key) DO UPDATE SET value=$1`,
+    [url || ""]
+  );
+  res.json({ ok: true });
+});
+
+app.post("/api/citas/sincronizar", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='citas_excel_url'");
+  const url = rows[0] ? rows[0].value : "";
+  if (!url) return res.status(400).json({ error: "No hay un link de Excel configurado. Pídele a un administrador que lo configure." });
+
+  let parsed;
+  try {
+    parsed = await descargarYParsearExcel(url);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+
+  const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+  const actor = urows[0] ? urows[0].nombre : "";
+
+  let creadas = 0, actualizadas = 0;
+  for (const c of parsed.citas) {
+    const { rows: existentes } = await pool.query(
+      "SELECT id FROM citas WHERE fecha_hora=$1 AND UPPER(patente)=UPPER($2)",
+      [c.fechaHora, c.patente || ""]
+    );
+    if (existentes[0]) {
+      await pool.query(
+        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6 WHERE id=$7`,
+        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, existentes[0].id]
+      );
+      actualizadas++;
+    } else {
+      await pool.query(
+        `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10, now())`,
+        [uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)"]
+      );
+      creadas++;
+    }
+  }
+
+  res.json({ creadas, actualizadas, totalFilas: parsed.citas.length, errores: parsed.errores, columnasDetectadas: parsed.columnasDetectadas });
+});
 
 app.get("/api/citas", requireAuth, async (req, res) => {
   const { desde, hasta } = req.query;
