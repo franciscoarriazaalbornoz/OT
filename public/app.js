@@ -96,6 +96,7 @@ async function savePassword(){
 function enterApp(){
   document.getElementById("userInfo").textContent = `${currentUser.nombre} · ${currentUser.rol}${currentUser.sucursal ? " · "+currentUser.sucursal : ""}`;
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("f_etapa").innerHTML = STAGES.map((s,i)=>`<option value="${i}">${s}</option>`).join("");
   populateSelect(document.getElementById("f_sucursal"), SUCURSALES);
   populateSelect(document.getElementById("filterSucursal"), SUCURSALES, "Todas las sucursales");
@@ -106,6 +107,10 @@ function enterApp(){
   renderLegend();
   populateSelect(document.getElementById("nu_rol"), ROLES);
   populateSelect(document.getElementById("nu_sucursal"), SUCURSALES);
+  populateSelect(document.getElementById("c_sucursal"), SUCURSALES);
+  populateSelect(document.getElementById("citasFilterSucursal"), SUCURSALES, "Todas las sucursales");
+  populateSelect(document.getElementById("repSucursal"), SUCURSALES, "Todas las sucursales");
+  document.getElementById("c_tipo").innerHTML = TIPOS.map(t=>`<option value="${t.value}">${t.label}</option>`).join("");
   show("appScreen");
   document.getElementById("appScreen").style.display = "block";
   loadOTs();
@@ -345,6 +350,11 @@ async function saveForm(){
     }else{
       const data = await api("/api/ots", { method:"POST", body: payload });
       ots.push(data.ot);
+      if(pendingCitaId){
+        try{ await api(`/api/citas/${pendingCitaId}`, { method:"PUT", body:{ estado:"convertida", otId: data.ot.id } }); }
+        catch(e){ console.error(e); }
+        pendingCitaId = null;
+      }
     }
     closeModal();
     render();
@@ -450,6 +460,323 @@ function printQr(){
   w.print();
 }
 
+// --- Citas previas ---
+let citasView = "dia";
+let citasFecha = new Date();
+let citasCache = [];
+let editingCitaId = null;
+let pendingCitaId = null;
+
+function dayRange(d){
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0);
+  const end = new Date(start); end.setDate(end.getDate()+1);
+  return [start, end];
+}
+function weekRange(d){
+  const day = d.getDay();
+  const diffToMonday = (day===0 ? -6 : 1-day);
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate()+diffToMonday, 0,0,0);
+  const end = new Date(monday); end.setDate(end.getDate()+7);
+  return [monday, end];
+}
+function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
+
+function openCitas(){
+  document.getElementById("appScreen").style.display = "none";
+  document.getElementById("citasScreen").style.display = "block";
+  document.getElementById("citasUserInfo").textContent = document.getElementById("userInfo").textContent;
+  loadCitas();
+}
+function closeCitas(){
+  document.getElementById("citasScreen").style.display = "none";
+  document.getElementById("appScreen").style.display = "block";
+}
+
+async function loadCitas(){
+  const [desde, hasta] = citasView==="dia" ? dayRange(citasFecha) : weekRange(citasFecha);
+  try{
+    const data = await api(`/api/citas?desde=${encodeURIComponent(desde.toISOString())}&hasta=${encodeURIComponent(hasta.toISOString())}`);
+    citasCache = data.citas;
+  }catch(e){ console.error(e); }
+  renderCitas();
+}
+
+function citasFiltradas(){
+  const suc = document.getElementById("citasFilterSucursal").value;
+  return citasCache.filter(c => !suc || c.sucursal===suc);
+}
+
+function updateCitasFechaLabel(){
+  const label = document.getElementById("citasFechaLabel");
+  if(citasView==="dia"){
+    label.textContent = citasFecha.toLocaleDateString("es-CL", { weekday:"long", day:"2-digit", month:"2-digit", year:"numeric" });
+  } else {
+    const [monday, end] = weekRange(citasFecha);
+    const sunday = new Date(end); sunday.setDate(sunday.getDate()-1);
+    label.textContent = monday.toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit"}) + " – " + sunday.toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
+  }
+}
+
+function renderCitas(){
+  updateCitasFechaLabel();
+  if(citasView==="dia") renderCitasDia(); else renderCitasSemana();
+}
+
+function renderCitasDia(){
+  document.getElementById("citasDiaView").style.display = "block";
+  document.getElementById("citasSemanaView").style.display = "none";
+  const list = citasFiltradas().sort((a,b)=> new Date(a.fechaHora)-new Date(b.fechaHora));
+  const el = document.getElementById("citasDiaView");
+  if(list.length===0){ el.innerHTML = `<div class="citas-empty">No hay citas agendadas para este día.</div>`; return; }
+  el.innerHTML = list.map(c=>{
+    const tipo = tipoInfo(c.tipo);
+    const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+    return `
+      <div class="cita-card" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
+        <div class="cita-hora">${hora}</div>
+        <div class="cita-info">
+          <div class="cita-cliente">${escapeHtml(c.cliente||"Sin nombre")} ${c.patente?"· "+escapeHtml(c.patente):""}</div>
+          <div class="cita-detalle">${escapeHtml(c.modelo||"")} ${c.sucursal?"· "+escapeHtml(c.sucursal):""} ${tipo?"· "+escapeHtml(tipo.label):""}</div>
+        </div>
+        <span class="cita-estado ${c.estado}">${estadoLabel(c.estado)}</span>
+      </div>`;
+  }).join("");
+  el.querySelectorAll("[data-id]").forEach(card=>card.addEventListener("click", ()=>openEditCita(card.dataset.id)));
+}
+
+function renderCitasSemana(){
+  document.getElementById("citasDiaView").style.display = "none";
+  document.getElementById("citasSemanaView").style.display = "flex";
+  const [monday] = weekRange(citasFecha);
+  const dias = [];
+  for(let i=0;i<7;i++){ const d = new Date(monday); d.setDate(d.getDate()+i); dias.push(d); }
+  const list = citasFiltradas();
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const el = document.getElementById("citasSemanaView");
+  el.innerHTML = dias.map(d=>{
+    const esHoy = d.getTime()===hoy.getTime();
+    const citasDia = list.filter(c => new Date(c.fechaHora).toDateString()===d.toDateString())
+      .sort((a,b)=> new Date(a.fechaHora)-new Date(b.fechaHora));
+    return `
+      <div class="citas-semana-col">
+        <div class="dia-head${esHoy?" hoy":""}">${d.toLocaleDateString("es-CL",{weekday:"short",day:"2-digit"})}</div>
+        ${citasDia.length===0 ? `<div class="citas-empty" style="padding:10px 0;font-size:11px;">Sin citas</div>` : citasDia.map(c=>{
+          const tipo = tipoInfo(c.tipo);
+          const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+          return `<div class="cita-mini" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
+        }).join("")}
+      </div>`;
+  }).join("");
+  el.querySelectorAll("[data-id]").forEach(card=>card.addEventListener("click", ()=>openEditCita(card.dataset.id)));
+}
+
+function citasPrev(){ citasFecha.setDate(citasFecha.getDate() - (citasView==="dia"?1:7)); loadCitas(); }
+function citasNext(){ citasFecha.setDate(citasFecha.getDate() + (citasView==="dia"?1:7)); loadCitas(); }
+function citasHoy(){ citasFecha = new Date(); loadCitas(); }
+
+function setCitasView(v){
+  citasView = v;
+  document.getElementById("citasViewDiaBtn").classList.toggle("active", v==="dia");
+  document.getElementById("citasViewSemanaBtn").classList.toggle("active", v==="semana");
+  loadCitas();
+}
+
+function openNewCita(){
+  editingCitaId = null;
+  document.getElementById("citaModalTitle").textContent = "Nueva cita";
+  document.getElementById("citaDeleteBtn").style.display = "none";
+  document.getElementById("citaConvertirBtn").style.display = "none";
+  document.getElementById("c_estadoField").style.display = "none";
+  document.getElementById("citaFormError").style.display = "none";
+  document.getElementById("c_fecha").value = citasFecha.toISOString().slice(0,10);
+  document.getElementById("c_hora").value = "09:00";
+  ["c_patente","c_cliente","c_telefono","c_modelo","c_notas"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("c_sucursal").value = currentUser.sucursal || SUCURSALES[0];
+  document.getElementById("c_tipo").value = "general";
+  document.getElementById("citaOverlay").classList.add("show");
+}
+
+function openEditCita(id){
+  const c = citasCache.find(x=>x.id===id);
+  if(!c) return;
+  editingCitaId = id;
+  document.getElementById("citaModalTitle").textContent = "Editar cita";
+  document.getElementById("citaDeleteBtn").style.display = "block";
+  document.getElementById("citaFormError").style.display = "none";
+  document.getElementById("c_estadoField").style.display = "block";
+  const d = new Date(c.fechaHora);
+  document.getElementById("c_fecha").value = d.toISOString().slice(0,10);
+  document.getElementById("c_hora").value = d.toTimeString().slice(0,5);
+  document.getElementById("c_patente").value = c.patente||"";
+  document.getElementById("c_cliente").value = c.cliente||"";
+  document.getElementById("c_telefono").value = c.telefono||"";
+  document.getElementById("c_modelo").value = c.modelo||"";
+  document.getElementById("c_sucursal").value = c.sucursal||SUCURSALES[0];
+  document.getElementById("c_tipo").value = c.tipo||"general";
+  document.getElementById("c_estado").value = c.estado||"pendiente";
+  document.getElementById("c_notas").value = c.notas||"";
+  document.getElementById("citaConvertirBtn").style.display = c.estado==="convertida" ? "none" : "inline-block";
+  document.getElementById("citaOverlay").classList.add("show");
+}
+
+function closeCitaModal(){ document.getElementById("citaOverlay").classList.remove("show"); }
+
+async function saveCita(){
+  const errorEl = document.getElementById("citaFormError");
+  errorEl.style.display = "none";
+  const fecha = document.getElementById("c_fecha").value;
+  const hora = document.getElementById("c_hora").value;
+  if(!fecha || !hora){ errorEl.textContent = "Ingresa fecha y hora de la cita."; errorEl.style.display = "block"; return; }
+  const payload = {
+    fechaHora: new Date(`${fecha}T${hora}:00`).toISOString(),
+    patente: document.getElementById("c_patente").value.trim(),
+    cliente: document.getElementById("c_cliente").value.trim(),
+    telefono: document.getElementById("c_telefono").value.trim(),
+    modelo: document.getElementById("c_modelo").value.trim(),
+    sucursal: document.getElementById("c_sucursal").value,
+    tipo: document.getElementById("c_tipo").value,
+    notas: document.getElementById("c_notas").value.trim()
+  };
+  if(editingCitaId) payload.estado = document.getElementById("c_estado").value;
+  try{
+    if(editingCitaId){
+      await api(`/api/citas/${editingCitaId}`, { method:"PUT", body: payload });
+    }else{
+      await api("/api/citas", { method:"POST", body: payload });
+    }
+    closeCitaModal();
+    loadCitas();
+  }catch(e){
+    errorEl.textContent = e.message;
+    errorEl.style.display = "block";
+  }
+}
+
+async function deleteCita(){
+  if(!editingCitaId) return;
+  if(!confirm("¿Eliminar esta cita?")) return;
+  try{
+    await api(`/api/citas/${editingCitaId}`, { method:"DELETE" });
+    closeCitaModal();
+    loadCitas();
+  }catch(e){ alert(e.message); }
+}
+
+function convertirCitaEnOT(){
+  const c = citasCache.find(x=>x.id===editingCitaId);
+  if(!c) return;
+  pendingCitaId = c.id;
+  closeCitaModal();
+  closeCitas();
+  openNew();
+  document.getElementById("f_patente").value = c.patente||"";
+  document.getElementById("f_cliente").value = c.cliente||"";
+  document.getElementById("f_modelo").value = c.modelo||"";
+  document.getElementById("f_sucursal").value = c.sucursal||SUCURSALES[0];
+  document.getElementById("f_tipo").value = c.tipo||"general";
+  document.getElementById("f_notas").value = "Agendado el " + new Date(c.fechaHora).toLocaleString("es-CL") + (c.notas ? " — " + c.notas : "");
+}
+
+// --- Reportes (solo Administrador) ---
+let repDetalleCache = [];
+
+function openReportes(){
+  document.getElementById("appScreen").style.display = "none";
+  document.getElementById("reportesScreen").style.display = "block";
+  const hoy = new Date();
+  const hace30 = new Date(); hace30.setDate(hace30.getDate()-30);
+  document.getElementById("repHasta").value = hoy.toISOString().slice(0,10);
+  document.getElementById("repDesde").value = hace30.toISOString().slice(0,10);
+  cargarReporte();
+}
+function closeReportes(){
+  document.getElementById("reportesScreen").style.display = "none";
+  document.getElementById("appScreen").style.display = "block";
+}
+
+function horasATexto(h){
+  if(h===null || h===undefined) return "—";
+  if(h < 1) return Math.round(h*60) + " min";
+  if(h < 48) return h.toFixed(1) + " h";
+  return (h/24).toFixed(1) + " días";
+}
+
+async function cargarReporte(){
+  const desde = document.getElementById("repDesde").value;
+  const hasta = document.getElementById("repHasta").value;
+  const sucursal = document.getElementById("repSucursal").value;
+  if(!desde || !hasta) return;
+  try{
+    const params = new URLSearchParams({ desde, hasta });
+    if(sucursal) params.set("sucursal", sucursal);
+    const data = await api(`/api/reportes/tiempos?${params.toString()}`);
+    repDetalleCache = data.detalle;
+    renderReporteSummary(data);
+    renderReporteEtapas(data);
+    renderReporteOts(data);
+  }catch(e){ alert(e.message); }
+}
+
+function renderReporteSummary(data){
+  const el = document.getElementById("repSummary");
+  el.innerHTML = `
+    <div class="rep-stat"><div class="n">${data.totalOts}</div><div class="l">OT en el período</div></div>
+    <div class="rep-stat"><div class="n" style="${data.totalSaltos>0?'color:var(--accent);':''}">${data.totalSaltos}</div><div class="l">Etapas saltadas detectadas</div></div>
+  `;
+}
+
+function renderReporteEtapas(data){
+  const el = document.getElementById("repTablaEtapas");
+  el.innerHTML = `
+    <tr><th>Etapa</th><th>Promedio de tiempo</th><th>OT registradas</th></tr>
+    ${data.promedioPorEtapa.map(p => `
+      <tr><td>${escapeHtml(p.etapa)}</td><td>${horasATexto(p.promedioHoras)}</td><td>${p.cantidad}</td></tr>
+    `).join("")}
+  `;
+}
+
+function renderReporteOts(data){
+  const el = document.getElementById("repTablaOts");
+  if(data.detalle.length===0){
+    el.innerHTML = `<tr><th>Sin datos</th></tr><tr><td>No hay OT en este período.</td></tr>`;
+    return;
+  }
+  el.innerHTML = `
+    <tr><th>OT</th><th>Cliente</th><th>Sucursal</th><th>Etapa actual</th><th>Tiempo total</th><th>Saltos</th></tr>
+    ${data.detalle.map(d => `
+      <tr class="clickable" data-id="${d.id}">
+        <td>${escapeHtml(d.numero)}${d.patente?" · "+escapeHtml(d.patente):""}</td>
+        <td>${escapeHtml(d.cliente||"—")}</td>
+        <td>${escapeHtml(d.sucursal||"—")}</td>
+        <td>${escapeHtml(STAGES[d.etapa]||"—")}</td>
+        <td>${horasATexto(d.tiempoTotalHoras)}</td>
+        <td>${d.saltos>0 ? `<span class="rep-salto-badge">${d.saltos} salto${d.saltos>1?"s":""}</span>` : "—"}</td>
+      </tr>
+    `).join("")}
+  `;
+  el.querySelectorAll("[data-id]").forEach(row=>row.addEventListener("click", ()=>openHistorial(row.dataset.id)));
+}
+
+function openHistorial(otId){
+  const d = repDetalleCache.find(x=>x.id===otId);
+  if(!d) return;
+  document.getElementById("historialTitle").textContent = "Historial — OT " + d.numero;
+  document.getElementById("historialList").innerHTML = d.cambios.map(c => {
+    const fecha = new Date(c.fecha).toLocaleString("es-CL");
+    const de = c.etapaAnterior===null ? "—" : STAGES[c.etapaAnterior];
+    const a = STAGES[c.etapaNueva];
+    const salto = c.etapaAnterior!==null && Math.abs(c.etapaNueva-c.etapaAnterior)>1;
+    return `
+      <div class="hist-row">
+        <div>
+          <div>${c.etapaAnterior===null ? "Creada en" : "De <b>"+escapeHtml(de)+"</b> a"} <b>${escapeHtml(a)}</b>${salto?' <span class="rep-salto-badge">salto</span>':""}</div>
+          <div class="meta">${escapeHtml(c.actor||"—")} · ${escapeHtml(c.origen||"—")} · ${fecha}</div>
+        </div>
+      </div>`;
+  }).join("");
+  document.getElementById("historialOverlay").classList.add("show");
+}
+
 document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("pwSaveBtn").addEventListener("click", savePassword);
@@ -477,5 +804,26 @@ document.getElementById("fotoInput").addEventListener("change", (e)=>{
   if(file) addFoto(file);
   e.target.value = "";
 });
+
+document.getElementById("citasBtn").addEventListener("click", openCitas);
+document.getElementById("citasVolverBtn").addEventListener("click", closeCitas);
+document.getElementById("citasNewBtn").addEventListener("click", openNewCita);
+document.getElementById("citasPrevBtn").addEventListener("click", citasPrev);
+document.getElementById("citasNextBtn").addEventListener("click", citasNext);
+document.getElementById("citasHoyBtn").addEventListener("click", citasHoy);
+document.getElementById("citasViewDiaBtn").addEventListener("click", ()=>setCitasView("dia"));
+document.getElementById("citasViewSemanaBtn").addEventListener("click", ()=>setCitasView("semana"));
+document.getElementById("citasFilterSucursal").addEventListener("change", renderCitas);
+document.getElementById("citaCancelBtn").addEventListener("click", closeCitaModal);
+document.getElementById("citaSaveBtn").addEventListener("click", saveCita);
+document.getElementById("citaDeleteBtn").addEventListener("click", deleteCita);
+document.getElementById("citaConvertirBtn").addEventListener("click", convertirCitaEnOT);
+document.getElementById("citaOverlay").addEventListener("click",(e)=>{ if(e.target.id==="citaOverlay") closeCitaModal(); });
+
+document.getElementById("reportesBtn").addEventListener("click", openReportes);
+document.getElementById("reportesVolverBtn").addEventListener("click", closeReportes);
+document.getElementById("repBuscarBtn").addEventListener("click", cargarReporte);
+document.getElementById("historialCloseBtn").addEventListener("click", ()=>document.getElementById("historialOverlay").classList.remove("show"));
+document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e.target.id==="historialOverlay") document.getElementById("historialOverlay").classList.remove("show"); });
 
 tryResumeSession();

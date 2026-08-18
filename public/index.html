@@ -38,8 +38,10 @@
     </div>
     <div class="topbar-controls">
       <button class="btn-ghost btn" id="usersBtn" style="display:none;">Usuarios</button>
+      <button class="btn-ghost btn" id="reportesBtn" style="display:none;">Reportes</button>
       <button class="btn-ghost btn" id="clienteQrBtn">QR para clientes</button>
       <button class="btn-ghost btn" id="tallerQrBtn">QR para taller</button>
+      <button class="btn-ghost btn" id="citasBtn">Citas</button>
       <button class="btn-ghost btn" id="refreshBtn">Actualizar</button>
       <button class="btn btn-primary" id="newBtn">+ Nueva OT</button>
       <button class="btn-ghost btn" id="logoutBtn">Salir</button>
@@ -58,6 +60,118 @@
   <div class="legend" id="legend"></div>
 
   <div class="board" id="board"></div>
+</div>
+
+<div id="citasScreen" style="display:none;">
+  <div class="topbar">
+    <div>
+      <h1>Citas previas</h1>
+      <div class="sub" id="citasUserInfo"></div>
+    </div>
+    <div class="topbar-controls">
+      <button class="btn-ghost btn" id="citasVolverBtn">← Volver al tablero</button>
+      <button class="btn btn-primary" id="citasNewBtn">+ Nueva cita</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <div class="view-toggle">
+      <button class="toggle-btn active" id="citasViewDiaBtn">Día</button>
+      <button class="toggle-btn" id="citasViewSemanaBtn">Semana</button>
+    </div>
+    <button class="btn-ghost btn" id="citasPrevBtn">‹</button>
+    <span class="citas-fecha-label" id="citasFechaLabel"></span>
+    <button class="btn-ghost btn" id="citasNextBtn">›</button>
+    <button class="btn-ghost btn" id="citasHoyBtn">Hoy</button>
+    <select id="citasFilterSucursal"><option value="">Todas las sucursales</option></select>
+  </div>
+
+  <div id="citasDiaView" class="citas-dia"></div>
+  <div id="citasSemanaView" class="citas-semana" style="display:none;"></div>
+</div>
+
+<div id="reportesScreen" style="display:none;">
+  <div class="topbar">
+    <div>
+      <h1>Reportes — tiempos por etapa</h1>
+      <div class="sub">Solo visible para el rol Administrador</div>
+    </div>
+    <div class="topbar-controls">
+      <button class="btn-ghost btn" id="reportesVolverBtn">← Volver al tablero</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <label class="rep-label">Desde</label>
+    <input id="repDesde" type="date">
+    <label class="rep-label">Hasta</label>
+    <input id="repHasta" type="date">
+    <select id="repSucursal"><option value="">Todas las sucursales</option></select>
+    <button class="btn btn-primary" id="repBuscarBtn">Buscar</button>
+  </div>
+
+  <div class="rep-summary" id="repSummary"></div>
+
+  <div class="rep-section">
+    <h3>Tiempo promedio por etapa</h3>
+    <table class="rep-table" id="repTablaEtapas"></table>
+  </div>
+
+  <div class="rep-section">
+    <h3>Detalle por OT</h3>
+    <table class="rep-table" id="repTablaOts"></table>
+  </div>
+</div>
+
+<div class="overlay" id="historialOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h2 id="historialTitle">Historial de la OT</h2>
+    <div id="historialList"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div class="modal-actions-right">
+        <button class="btn" id="historialCloseBtn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="citaOverlay">
+  <div class="modal">
+    <h2 id="citaModalTitle">Nueva cita</h2>
+    <div class="form-error" id="citaFormError"></div>
+    <div class="grid2">
+      <div class="field"><label>Fecha</label><input id="c_fecha" type="date"></div>
+      <div class="field"><label>Hora</label><input id="c_hora" type="time"></div>
+    </div>
+    <div class="field"><label>Patente</label><input id="c_patente" placeholder="AB1234"></div>
+    <div class="field"><label>Cliente</label><input id="c_cliente" placeholder="Nombre del cliente"></div>
+    <div class="grid2">
+      <div class="field"><label>Teléfono</label><input id="c_telefono" placeholder="+56 9 1234 5678"></div>
+      <div class="field"><label>Modelo / vehículo</label><input id="c_modelo" placeholder="Ej: Toyota Yaris"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Sucursal</label><select id="c_sucursal"></select></div>
+      <div class="field"><label>Tipo de trabajo</label><select id="c_tipo"></select></div>
+    </div>
+    <div class="field" id="c_estadoField" style="display:none;">
+      <label>Estado</label>
+      <select id="c_estado">
+        <option value="pendiente">Pendiente</option>
+        <option value="no_show">No llegó</option>
+        <option value="convertida">Convertida en OT</option>
+      </select>
+    </div>
+    <div class="field"><label>Notas</label><textarea id="c_notas" rows="2" placeholder="Observaciones..."></textarea></div>
+    <div class="modal-actions">
+      <button class="danger-link" id="citaDeleteBtn" style="display:none;">Eliminar cita</button>
+      <div class="modal-actions-right">
+        <button class="btn" id="citaCancelBtn">Cancelar</button>
+        <button class="btn btn-primary" id="citaConvertirBtn" style="display:none;">Convertir en OT</button>
+        <button class="btn btn-primary" id="citaSaveBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="overlay" id="overlay">
