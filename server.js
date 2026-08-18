@@ -51,6 +51,13 @@ function publicUser(u) {
 }
 function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+async function logCambioEtapa(otId, etapaAnterior, etapaNueva, actor, origen) {
+  await pool.query(
+    "INSERT INTO etapa_historial (id, ot_id, etapa_anterior, etapa_nueva, actor, origen, created_at) VALUES ($1,$2,$3,$4,$5,$6, now())",
+    [uid("hist"), otId, etapaAnterior, etapaNueva, actor || "", origen]
+  );
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -83,6 +90,34 @@ async function initDb() {
   // Migración: agrega la columna de fecha/hora de entrega si la tabla ya existía sin ella
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'general';`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS etapa_historial (
+      id TEXT PRIMARY KEY,
+      ot_id TEXT NOT NULL REFERENCES ots(id) ON DELETE CASCADE,
+      etapa_anterior INTEGER,
+      etapa_nueva INTEGER NOT NULL,
+      actor TEXT DEFAULT '',
+      origen TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS citas (
+      id TEXT PRIMARY KEY,
+      patente TEXT DEFAULT '',
+      cliente TEXT DEFAULT '',
+      telefono TEXT DEFAULT '',
+      modelo TEXT DEFAULT '',
+      fecha_hora TIMESTAMPTZ NOT NULL,
+      sucursal TEXT DEFAULT '',
+      tipo TEXT DEFAULT 'general',
+      estado TEXT DEFAULT 'pendiente',
+      notas TEXT DEFAULT '',
+      creado_por TEXT DEFAULT '',
+      ot_id TEXT REFERENCES ots(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ot_fotos (
       id TEXT PRIMARY KEY,
@@ -216,6 +251,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
      b.notas || "", user ? user.nombre : ""]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [id]);
+  await logCambioEtapa(id, null, etapa, user ? user.nombre : "", "creacion");
   res.json({ ot: rowToOt(rows[0]) });
 });
 
@@ -234,6 +270,10 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
      merged.notas, req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
+  if (merged.etapa !== existing.etapa) {
+    const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+    await logCambioEtapa(req.params.id, existing.etapa, merged.etapa, urows[0] ? urows[0].nombre : "", "escritorio");
+  }
   res.json({ ot: rowToOt(rows[0]) });
 });
 
@@ -271,6 +311,63 @@ app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
 
 app.delete("/api/ots/:id/fotos/:fotoId", requireAuth, async (req, res) => {
   await pool.query("DELETE FROM ot_fotos WHERE id=$1 AND ot_id=$2", [req.params.fotoId, req.params.id]);
+  res.json({ ok: true });
+});
+
+function rowToCita(r) {
+  return {
+    id: r.id, patente: r.patente || "", cliente: r.cliente || "", telefono: r.telefono || "",
+    modelo: r.modelo || "", fechaHora: r.fecha_hora ? new Date(r.fecha_hora).toISOString() : "",
+    sucursal: r.sucursal || "", tipo: r.tipo || "general", estado: r.estado || "pendiente",
+    notas: r.notas || "", creadoPor: r.creado_por || "", otId: r.ot_id || null
+  };
+}
+
+app.get("/api/citas", requireAuth, async (req, res) => {
+  const { desde, hasta } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
+  const { rows } = await pool.query(
+    "SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 ORDER BY fecha_hora",
+    [desde, hasta]
+  );
+  res.json({ citas: rows.map(rowToCita) });
+});
+
+app.post("/api/citas", requireAuth, async (req, res) => {
+  const b = req.body || {};
+  if (!b.fechaHora) return res.status(400).json({ error: "Falta la fecha y hora de la cita" });
+  const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+  const id = uid("cita");
+  await pool.query(
+    `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10, now())`,
+    [id, b.patente || "", b.cliente || "", b.telefono || "", b.modelo || "", b.fechaHora,
+     b.sucursal || SUCURSALES[0], TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
+     b.notas || "", urows[0] ? urows[0].nombre : ""]
+  );
+  const { rows } = await pool.query("SELECT * FROM citas WHERE id=$1", [id]);
+  res.json({ cita: rowToCita(rows[0]) });
+});
+
+app.put("/api/citas/:id", requireAuth, async (req, res) => {
+  const { rows: existingRows } = await pool.query("SELECT * FROM citas WHERE id=$1", [req.params.id]);
+  if (!existingRows[0]) return res.status(404).json({ error: "Cita no encontrada" });
+  const existing = rowToCita(existingRows[0]);
+  const b = req.body || {};
+  const merged = { ...existing, ...b };
+  await pool.query(
+    `UPDATE citas SET patente=$1, cliente=$2, telefono=$3, modelo=$4, fecha_hora=$5, sucursal=$6, tipo=$7, estado=$8, notas=$9, ot_id=$10 WHERE id=$11`,
+    [merged.patente, merged.cliente, merged.telefono, merged.modelo, merged.fechaHora, merged.sucursal,
+     TIPOS_TRABAJO.some(t=>t.value===merged.tipo) ? merged.tipo : "general",
+     ["pendiente","convertida","no_show"].includes(merged.estado) ? merged.estado : "pendiente",
+     merged.notas, merged.otId || null, req.params.id]
+  );
+  const { rows } = await pool.query("SELECT * FROM citas WHERE id=$1", [req.params.id]);
+  res.json({ cita: rowToCita(rows[0]) });
+});
+
+app.delete("/api/citas/:id", requireAuth, async (req, res) => {
+  await pool.query("DELETE FROM citas WHERE id=$1", [req.params.id]);
   res.json({ ok: true });
 });
 
@@ -327,6 +424,9 @@ app.put("/api/public/ot/:id/stage", async (req, res) => {
   const existing = rowToOt(rows[0]);
   await pool.query("UPDATE ots SET etapa=$1, responsable=$2, updated_at=now() WHERE id=$3",
     [etapa, actorNombre || existing.responsable, req.params.id]);
+  if (etapa !== existing.etapa) {
+    await logCambioEtapa(req.params.id, existing.etapa, etapa, actorNombre || "", "tecnico");
+  }
   const { rows: updatedRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updatedRows[0]), stages: STAGES });
 });
@@ -388,6 +488,73 @@ app.get("/api/qr/consulta", requireAuth, async (req, res) => {
 app.get("/consulta", (req, res) => { res.sendFile(path.join(__dirname, "public", "consulta.html")); });
 
 app.get("/t/:id", (req, res) => { res.sendFile(path.join(__dirname, "public", "tecnico.html")); });
+
+// --- Reportes (solo Administrador) ---
+app.get("/api/reportes/tiempos", requireAuth, requireAdmin, async (req, res) => {
+  const desde = req.query.desde || "2000-01-01";
+  const hastaRaw = req.query.hasta;
+  const hasta = hastaRaw ? new Date(new Date(hastaRaw).getTime() + 86400000).toISOString() : new Date(9999,0,1).toISOString();
+  const sucursal = req.query.sucursal || "";
+
+  const { rows: otRows } = await pool.query(
+    `SELECT * FROM ots WHERE fecha_ingreso >= $1 AND fecha_ingreso < $2 ${sucursal ? "AND sucursal=$3" : ""}`,
+    sucursal ? [desde, hasta, sucursal] : [desde, hasta]
+  );
+  const otIds = otRows.map(r => r.id);
+  let histRows = [];
+  if (otIds.length > 0) {
+    const { rows } = await pool.query(
+      `SELECT * FROM etapa_historial WHERE ot_id = ANY($1) ORDER BY ot_id, created_at`,
+      [otIds]
+    );
+    histRows = rows;
+  }
+
+  const historialPorOt = {};
+  histRows.forEach(h => {
+    if (!historialPorOt[h.ot_id]) historialPorOt[h.ot_id] = [];
+    historialPorOt[h.ot_id].push(h);
+  });
+
+  const sumaPorEtapa = STAGES.map(() => 0);
+  const cuentaPorEtapa = STAGES.map(() => 0);
+  const detalle = [];
+
+  otRows.forEach(otRow => {
+    const ot = rowToOt(otRow);
+    const hist = historialPorOt[ot.id] || [];
+    let saltos = 0;
+    for (let i = 0; i < hist.length; i++) {
+      const h = hist[i];
+      const desdeEtapa = h.etapa_anterior;
+      const hastaEtapa = h.etapa_nueva;
+      if (desdeEtapa !== null && Math.abs(hastaEtapa - desdeEtapa) > 1) saltos++;
+      const inicio = new Date(h.created_at);
+      const finProx = hist[i+1] ? new Date(hist[i+1].created_at) : new Date();
+      const horas = (finProx - inicio) / 3600000;
+      if (hastaEtapa >= 0 && hastaEtapa < STAGES.length && horas >= 0) {
+        sumaPorEtapa[hastaEtapa] += horas;
+        cuentaPorEtapa[hastaEtapa] += 1;
+      }
+    }
+    const primeraEntrada = hist[0] ? new Date(hist[0].created_at) : null;
+    const ultimaEntrada = hist[hist.length-1] ? new Date(hist[hist.length-1].created_at) : null;
+    const tiempoTotalHoras = primeraEntrada ? ((ot.etapa === STAGES.length-1 && ultimaEntrada ? ultimaEntrada : new Date()) - primeraEntrada) / 3600000 : null;
+    detalle.push({
+      id: ot.id, numero: ot.numero, patente: ot.patente, cliente: ot.cliente, sucursal: ot.sucursal,
+      tipo: ot.tipo, etapa: ot.etapa, tiempoTotalHoras, saltos,
+      cambios: hist.map(h => ({ etapaAnterior: h.etapa_anterior, etapaNueva: h.etapa_nueva, actor: h.actor, origen: h.origen, fecha: h.created_at }))
+    });
+  });
+
+  const promedioPorEtapa = STAGES.map((s, i) => ({
+    etapa: s,
+    promedioHoras: cuentaPorEtapa[i] > 0 ? sumaPorEtapa[i] / cuentaPorEtapa[i] : null,
+    cantidad: cuentaPorEtapa[i]
+  }));
+
+  res.json({ stages: STAGES, promedioPorEtapa, detalle, totalOts: otRows.length, totalSaltos: detalle.reduce((a,d)=>a+d.saltos,0) });
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 
