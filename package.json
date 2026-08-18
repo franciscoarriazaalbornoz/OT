@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "App de seguimiento de OT para talleres de servicio - Grupo Summit SMSA",
   "main": "server.js",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js"
   },
