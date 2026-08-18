@@ -97,6 +97,7 @@ function enterApp(){
   document.getElementById("userInfo").textContent = `${currentUser.nombre} · ${currentUser.rol}${currentUser.sucursal ? " · "+currentUser.sucursal : ""}`;
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("f_etapa").innerHTML = STAGES.map((s,i)=>`<option value="${i}">${s}</option>`).join("");
   populateSelect(document.getElementById("f_sucursal"), SUCURSALES);
   populateSelect(document.getElementById("filterSucursal"), SUCURSALES, "Todas las sucursales");
@@ -777,6 +778,46 @@ function openHistorial(otId){
   document.getElementById("historialOverlay").classList.add("show");
 }
 
+async function abrirConfigExcel(){
+  document.getElementById("excelConfigError").style.display = "none";
+  try{
+    const data = await api("/api/settings/citas-excel-url");
+    document.getElementById("excelUrlInput").value = data.url || "";
+  }catch(e){ document.getElementById("excelUrlInput").value = ""; }
+  document.getElementById("excelConfigOverlay").classList.add("show");
+}
+function cerrarConfigExcel(){ document.getElementById("excelConfigOverlay").classList.remove("show"); }
+
+async function guardarConfigExcel(){
+  const errorEl = document.getElementById("excelConfigError");
+  errorEl.style.display = "none";
+  try{
+    await api("/api/settings/citas-excel-url", { method:"PUT", body:{ url: document.getElementById("excelUrlInput").value.trim() } });
+    cerrarConfigExcel();
+  }catch(e){
+    errorEl.textContent = e.message;
+    errorEl.style.display = "block";
+  }
+}
+
+async function sincronizarExcel(){
+  const msg = document.getElementById("citasSyncMsg");
+  msg.style.display = "block";
+  msg.className = "sync-msg";
+  msg.textContent = "Sincronizando...";
+  try{
+    const data = await api("/api/citas/sincronizar", { method:"POST" });
+    msg.className = "sync-msg ok";
+    let texto = `Listo — ${data.creadas} cita(s) nueva(s), ${data.actualizadas} actualizada(s) de ${data.totalFilas} filas leídas.`;
+    if(data.errores && data.errores.length) texto += ` (${data.errores.length} fila(s) con problemas — revisa el formato)`;
+    msg.textContent = texto;
+    loadCitas();
+  }catch(e){
+    msg.className = "sync-msg error";
+    msg.textContent = e.message;
+  }
+}
+
 document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("pwSaveBtn").addEventListener("click", savePassword);
@@ -825,5 +866,11 @@ document.getElementById("reportesVolverBtn").addEventListener("click", closeRepo
 document.getElementById("repBuscarBtn").addEventListener("click", cargarReporte);
 document.getElementById("historialCloseBtn").addEventListener("click", ()=>document.getElementById("historialOverlay").classList.remove("show"));
 document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e.target.id==="historialOverlay") document.getElementById("historialOverlay").classList.remove("show"); });
+
+document.getElementById("citasSyncBtn").addEventListener("click", sincronizarExcel);
+document.getElementById("citasConfigExcelBtn").addEventListener("click", abrirConfigExcel);
+document.getElementById("excelConfigCancelBtn").addEventListener("click", cerrarConfigExcel);
+document.getElementById("excelConfigSaveBtn").addEventListener("click", guardarConfigExcel);
+document.getElementById("excelConfigOverlay").addEventListener("click",(e)=>{ if(e.target.id==="excelConfigOverlay") cerrarConfigExcel(); });
 
 tryResumeSession();

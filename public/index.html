@@ -69,6 +69,8 @@
       <div class="sub" id="citasUserInfo"></div>
     </div>
     <div class="topbar-controls">
+      <button class="btn-ghost btn" id="citasConfigExcelBtn" style="display:none;">Configurar Excel</button>
+      <button class="btn-ghost btn" id="citasSyncBtn">Sincronizar desde Excel</button>
       <button class="btn-ghost btn" id="citasVolverBtn">← Volver al tablero</button>
       <button class="btn btn-primary" id="citasNewBtn">+ Nueva cita</button>
     </div>
@@ -86,8 +88,34 @@
     <select id="citasFilterSucursal"><option value="">Todas las sucursales</option></select>
   </div>
 
+  <div id="citasSyncMsg" class="sync-msg" style="display:none;"></div>
+
   <div id="citasDiaView" class="citas-dia"></div>
   <div id="citasSemanaView" class="citas-semana" style="display:none;"></div>
+</div>
+
+<div class="overlay" id="excelConfigOverlay">
+  <div class="modal" style="max-width:480px;">
+    <h2>Configurar Excel de citas</h2>
+    <p style="font-size:12.5px;color:var(--text-2);margin-top:-8px;">
+      Pega el link "para compartir" de OneDrive/SharePoint del archivo de citas.
+      Debe estar configurado como <b>"Cualquiera con el link puede ver"</b> (sin pedir inicio de sesión),
+      o la sincronización no va a poder descargarlo.
+    </p>
+    <div class="form-error" id="excelConfigError"></div>
+    <div class="field"><label>Link del archivo</label><input id="excelUrlInput" placeholder="https://...sharepoint.com/... o https://1drv.ms/..."></div>
+    <p style="font-size:11.5px;color:var(--text-2);">
+      Columnas esperadas en la primera fila (no importa el orden): <b>Fecha, Hora, Patente, Cliente,
+      Teléfono, Modelo, Sucursal, Tipo, Notas</b>. También acepta variantes como "Placa", "Vehículo" o "Fono".
+    </p>
+    <div class="modal-actions">
+      <div></div>
+      <div class="modal-actions-right">
+        <button class="btn" id="excelConfigCancelBtn">Cancelar</button>
+        <button class="btn btn-primary" id="excelConfigSaveBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="reportesScreen" style="display:none;">

@@ -100,6 +100,10 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .rep-salto-badge{background:#FBE6E6;color:var(--accent);font-size:10px;font-weight:700;border-radius:10px;padding:2px 8px;}
 .hist-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;}
 .hist-row .meta{color:var(--text-2);font-size:11px;}
+
+.sync-msg{margin:0 24px 12px;padding:10px 14px;border-radius:9px;font-size:12.5px;}
+.sync-msg.ok{background:#E4F1EA;color:#0F5A38;}
+.sync-msg.error{background:#FBE6E6;color:#8C1D1D;}
 .card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
 .card-suc{font-size:10px;color:var(--text-2);background:#F0EFEA;border-radius:5px;padding:2px 6px;}
 .card-move{display:flex;gap:4px;}
