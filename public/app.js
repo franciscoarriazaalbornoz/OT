@@ -98,6 +98,10 @@ function enterApp(){
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  // La sucursal del usuario es mandante: si no es Administrador, no tiene sentido ofrecerle
+  // un filtro de "otras sucursales" — el servidor de todas formas solo le va a devolver la suya.
+  document.getElementById("filterSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("citasFilterSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("f_etapa").innerHTML = STAGES.map((s,i)=>`<option value="${i}">${s}</option>`).join("");
   populateSelect(document.getElementById("f_sucursal"), SUCURSALES);
   populateSelect(document.getElementById("filterSucursal"), SUCURSALES, "Todas las sucursales");
@@ -293,6 +297,7 @@ function openNew(){
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
+  document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador";
   document.getElementById("f_etapa").value = "0";
   document.getElementById("f_prioridad").value = "normal";
   document.getElementById("f_tipo").value = "general";
@@ -316,6 +321,7 @@ function openEdit(id){
   document.getElementById("f_cliente").value = o.cliente||"";
   document.getElementById("f_modelo").value = o.modelo||"";
   document.getElementById("f_sucursal").value = o.sucursal||SUCURSALES[0];
+  document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador";
   document.getElementById("f_etapa").value = String(o.etapa||0);
   document.getElementById("f_responsable").value = o.responsable||"";
   document.getElementById("f_prioridad").value = o.prioridad||"normal";
@@ -602,6 +608,7 @@ function openNewCita(){
   document.getElementById("c_hora").value = "09:00";
   ["c_patente","c_cliente","c_telefono","c_modelo","c_notas"].forEach(id=>document.getElementById(id).value="");
   document.getElementById("c_sucursal").value = currentUser.sucursal || SUCURSALES[0];
+  document.getElementById("c_sucursal").disabled = currentUser.rol !== "Administrador";
   document.getElementById("c_tipo").value = "general";
   document.getElementById("citaOverlay").classList.add("show");
 }
@@ -622,6 +629,7 @@ function openEditCita(id){
   document.getElementById("c_telefono").value = c.telefono||"";
   document.getElementById("c_modelo").value = c.modelo||"";
   document.getElementById("c_sucursal").value = c.sucursal||SUCURSALES[0];
+  document.getElementById("c_sucursal").disabled = currentUser.rol !== "Administrador";
   document.getElementById("c_tipo").value = c.tipo||"general";
   document.getElementById("c_estado").value = c.estado||"pendiente";
   document.getElementById("c_notas").value = c.notas||"";
