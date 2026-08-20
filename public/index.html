@@ -269,6 +269,15 @@
     <hr style="border:none;border-top:1px solid var(--border);margin:16px 0;">
     <h2 style="font-size:14px;">Crear usuario</h2>
     <div class="form-error" id="userFormError"></div>
+    <div class="import-box">
+      <div class="import-box-text">
+        <b>Importar varios de una vez</b>
+        <span>Sube un Excel/CSV con columnas: usuario, nombre, rol, sucursal, clave (opcional).</span>
+      </div>
+      <input type="file" id="importUsersInput" accept=".xlsx,.xls,.csv" style="display:none;">
+      <button class="btn" id="importUsersBtn" type="button">Importar desde Excel</button>
+    </div>
+    <div id="importUsersMsg" class="sync-msg" style="display:none;"></div>
     <div class="grid2">
       <div class="field"><label>Usuario</label><input id="nu_username" placeholder="jperez"></div>
       <div class="field"><label>Nombre</label><input id="nu_nombre" placeholder="Juan Pérez"></div>

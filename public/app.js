@@ -434,6 +434,34 @@ async function createUser(){
   }
 }
 
+function leerArchivoComoBase64(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function importarUsuariosExcel(file){
+  const msg = document.getElementById("importUsersMsg");
+  msg.style.display = "block";
+  msg.className = "sync-msg";
+  msg.textContent = "Importando...";
+  try{
+    const fileBase64 = await leerArchivoComoBase64(file);
+    const data = await api("/api/users/importar-excel", { method:"POST", body:{ fileBase64 } });
+    msg.className = "sync-msg ok";
+    let texto = `Listo — ${data.creados} usuario(s) nuevo(s), ${data.existentes} ya existían, de ${data.totalFilas} filas leídas.`;
+    if(data.errores && data.errores.length) texto += ` (${data.errores.length} fila(s) con problemas: ${data.errores.slice(0,3).join(" ")})`;
+    msg.textContent = texto;
+    openUsers();
+  }catch(e){
+    msg.className = "sync-msg error";
+    msg.textContent = e.message;
+  }
+}
+
 async function openQr(){
   if(!editingId) return;
   try{
@@ -851,6 +879,12 @@ document.getElementById("logoutBtn").addEventListener("click", async ()=>{ await
 document.getElementById("usersBtn").addEventListener("click", openUsers);
 document.getElementById("usersCloseBtn").addEventListener("click", ()=>document.getElementById("usersOverlay").classList.remove("show"));
 document.getElementById("createUserBtn").addEventListener("click", createUser);
+document.getElementById("importUsersBtn").addEventListener("click", ()=>document.getElementById("importUsersInput").click());
+document.getElementById("importUsersInput").addEventListener("change", (e)=>{
+  const file = e.target.files[0];
+  if(file) importarUsuariosExcel(file);
+  e.target.value = "";
+});
 document.getElementById("qrBtn").addEventListener("click", openQr);
 document.getElementById("qrCloseBtn").addEventListener("click", ()=>document.getElementById("qrOverlay").classList.remove("show"));
 document.getElementById("qrPrintBtn").addEventListener("click", printQr);
