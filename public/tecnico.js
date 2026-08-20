@@ -100,6 +100,13 @@ function render(){
   document.getElementById("v_modelo").textContent = [ot.modelo, ot.patente].filter(Boolean).join(" · ");
   document.getElementById("v_etapa").textContent = stages[ot.etapa];
 
+  const lavadoBox = document.getElementById("lavadoCheckBox");
+  const esEtapaLavado = stages[ot.etapa] === "Lavado";
+  lavadoBox.style.display = esEtapaLavado ? "block" : "none";
+  if(esEtapaLavado){
+    document.getElementById("lavadoCheckInput").checked = !!ot.checkLavado;
+  }
+
   document.getElementById("backBtn").disabled = ot.etapa === 0;
   document.getElementById("advanceBtn").disabled = ot.etapa === stages.length - 1;
   document.getElementById("advanceBtn").textContent = ot.etapa === stages.length - 1
@@ -142,6 +149,28 @@ async function updateStage(etapa){
     msg.className = "msg error";
   }
 }
+
+async function toggleCheckLavado(){
+  const msg = document.getElementById("msg");
+  const checked = document.getElementById("lavadoCheckInput").checked;
+  try{
+    const res = await fetch(`/api/public/ot/${otId}/check-lavado`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: checked })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || "No se pudo guardar");
+    ot = data.ot;
+    msg.textContent = checked ? "Marcado ✓" : "Desmarcado";
+    msg.className = "msg ok";
+  }catch(e){
+    document.getElementById("lavadoCheckInput").checked = !checked;
+    msg.textContent = e.message;
+    msg.className = "msg error";
+  }
+}
+document.getElementById("lavadoCheckInput").addEventListener("change", toggleCheckLavado);
 
 document.getElementById("advanceBtn").addEventListener("click", ()=>{
   if(ot.etapa < stages.length-1) updateStage(ot.etapa+1);

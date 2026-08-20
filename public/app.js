@@ -213,6 +213,11 @@ function render(){
   const data = filteredOTs();
   document.getElementById("totalCount").textContent = data.length + " OT en tablero";
 
+  const maxEnColumna = Math.max(0, ...STAGES.map((s,idx)=> data.filter(o=>o.etapa===idx).length));
+  board.classList.remove("compact","ultra-compact");
+  if(maxEnColumna > 12) board.classList.add("ultra-compact");
+  else if(maxEnColumna > 6) board.classList.add("compact");
+
   STAGES.forEach((stage, idx)=>{
     const col = document.createElement("div");
     col.className = "col";
@@ -246,6 +251,7 @@ function render(){
         <div class="card-chips">
           ${tipo ? `<span class="chip-tipo" style="background:#${tipo.color}">${escapeHtml(tipo.label)}</span>` : ""}
           ${o.prioridad==="alta" ? `<span class="chip-alta">Alta</span>` : ""}
+          ${o.checkLavado ? `<span class="card-lavado-ok">✓ Lavado OK</span>` : ""}
         </div>
         <div class="card-foot">
           <span class="card-suc">${escapeHtml(o.sucursal||"—")}</span>
@@ -283,6 +289,7 @@ function openNew(){
   document.getElementById("qrBtn").style.display = "none";
   document.getElementById("formError").style.display = "none";
   ["f_numero","f_patente","f_cliente","f_modelo","f_responsable","f_notas"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("f_check_lavado").checked = false;
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
@@ -314,6 +321,7 @@ function openEdit(id){
   document.getElementById("f_prioridad").value = o.prioridad||"normal";
   document.getElementById("f_tipo").value = o.tipo||"";
   document.getElementById("f_notas").value = o.notas||"";
+  document.getElementById("f_check_lavado").checked = !!o.checkLavado;
   document.getElementById("fotosSection").style.display = "block";
   document.getElementById("fotosGrid").innerHTML = "";
   loadFotos();
@@ -340,7 +348,8 @@ async function saveForm(){
     responsable: document.getElementById("f_responsable").value.trim(),
     prioridad: document.getElementById("f_prioridad").value,
     tipo: document.getElementById("f_tipo").value,
-    notas: document.getElementById("f_notas").value.trim()
+    notas: document.getElementById("f_notas").value.trim(),
+    checkLavado: document.getElementById("f_check_lavado").checked
   };
 
   try{

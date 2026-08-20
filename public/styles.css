@@ -104,12 +104,36 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .sync-msg{margin:0 24px 12px;padding:10px 14px;border-radius:9px;font-size:12.5px;}
 .sync-msg.ok{background:#E4F1EA;color:#0F5A38;}
 .sync-msg.error{background:#FBE6E6;color:#8C1D1D;}
+
+.checkbox-label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);font-weight:600;cursor:pointer;}
+.checkbox-label input{width:16px;height:16px;cursor:pointer;}
+.field-hint{display:block;font-size:11px;color:var(--text-3);margin-top:3px;margin-left:24px;}
+.card-lavado-ok{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;font-weight:700;color:#0F5A38;background:#E4F1EA;border-radius:5px;padding:2px 7px;}
 .card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
 .card-suc{font-size:10px;color:var(--text-2);background:#F0EFEA;border-radius:5px;padding:2px 6px;}
 .card-move{display:flex;gap:4px;}
 .mini{border:none;background:#EFEDE7;border-radius:5px;width:22px;height:22px;font-size:12px;cursor:pointer;line-height:1;}
 .mini:hover{background:#E2E0D8;}
 .empty-col{font-size:11.5px;color:var(--text-3);text-align:center;padding:16px 4px;}
+
+/* Auto-ajuste: cuando una columna tiene muchas OT, las tarjetas se comprimen para que quepan sin scroll */
+.board.compact .card{padding:6px 9px;}
+.board.compact .card-modelo{display:none;}
+.board.compact .card-entrega{display:none;}
+.board.compact .card-cliente{font-size:11.5px;margin:2px 0 0;}
+.board.compact .card-chips{margin-top:3px;}
+.board.compact .card-foot{margin-top:4px;}
+
+.board.ultra-compact .card{padding:4px 8px;border-left-width:3px;}
+.board.ultra-compact .card-modelo,
+.board.ultra-compact .card-entrega,
+.board.ultra-compact .card-chips{display:none;}
+.board.ultra-compact .card-cliente{font-size:10.5px;margin:1px 0 0;}
+.board.ultra-compact .card-top{align-items:center;}
+.board.ultra-compact .card-ot{font-size:11px;}
+.board.ultra-compact .card-foot{margin-top:3px;}
+.board.ultra-compact .card-suc{font-size:9px;padding:1px 5px;}
+.board.ultra-compact .mini{width:18px;height:18px;font-size:10px;}
 
 .overlay{position:fixed;inset:0;background:rgba(20,20,18,.5);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;}
 .overlay.show{display:flex;}
