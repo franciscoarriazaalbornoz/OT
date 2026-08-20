@@ -172,6 +172,27 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+// Devuelve { rol, sucursal, isAdmin } del usuario autenticado, o null si no existe.
+// La sucursal asignada al usuario es mandante: define qué OT puede ver/tocar (salvo Administrador, que ve todo).
+async function currentUserAccess(req) {
+  const { rows } = await pool.query("SELECT rol, sucursal FROM users WHERE id=$1", [req.session.userId]);
+  if (!rows[0]) return null;
+  return { rol: rows[0].rol, sucursal: rows[0].sucursal, isAdmin: rows[0].rol === "Administrador" };
+}
+
+// Verifica que el usuario autenticado tenga acceso a la sucursal de una OT puntual.
+// Devuelve null si tiene acceso, o un objeto {status, error} listo para responder si no.
+async function checkOtAccess(req, otId) {
+  const acc = await currentUserAccess(req);
+  if (!acc) return { status: 401, error: "No autenticado" };
+  const { rows } = await pool.query("SELECT sucursal FROM ots WHERE id=$1", [otId]);
+  if (!rows[0]) return { status: 404, error: "OT no encontrada" };
+  if (!acc.isAdmin && rows[0].sucursal !== acc.sucursal) {
+    return { status: 403, error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" };
+  }
+  return null;
+}
+
 // --- Autenticación ---
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body || {};
@@ -239,23 +260,32 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 
 // --- OT ---
 app.get("/api/ots", requireAuth, async (req, res) => {
-  const { rows } = await pool.query("SELECT * FROM ots ORDER BY updated_at DESC");
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
+  const { rows } = acc.isAdmin
+    ? await pool.query("SELECT * FROM ots ORDER BY updated_at DESC")
+    : await pool.query("SELECT * FROM ots WHERE sucursal=$1 ORDER BY updated_at DESC", [acc.sucursal]);
   res.json({ ots: rows.map(rowToOt) });
 });
 
 app.post("/api/ots", requireAuth, async (req, res) => {
   const b = req.body || {};
   if (!b.numero || !String(b.numero).trim()) return res.status(400).json({ error: "Falta el número de OT" });
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows: urows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   const user = urows[0] ? rowToUser(urows[0]) : null;
   const id = uid("ot");
   const etapa = Number.isInteger(b.etapa) ? b.etapa : 0;
   const fecha = b.fechaIngreso || new Date().toISOString().slice(0, 10);
+  // La sucursal del usuario es mandante: si no es Administrador, la OT queda SIEMPRE en su propia sucursal,
+  // sin importar qué haya enviado el formulario.
+  const sucursalFinal = acc.isAdmin ? (b.sucursal || SUCURSALES[0]) : acc.sucursal;
   await pool.query(
     `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, tipo, notas, creado_por, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`,
     [id, String(b.numero).trim(), b.patente || "", fecha, b.fechaEntrega || null, b.cliente || "", b.modelo || "",
-     b.sucursal || SUCURSALES[0], etapa, b.responsable || "", b.prioridad === "alta" ? "alta" : "normal",
+     sucursalFinal, etapa, b.responsable || "", b.prioridad === "alta" ? "alta" : "normal",
      TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
      b.notas || "", user ? user.nombre : ""]
   );
@@ -265,11 +295,18 @@ app.post("/api/ots", requireAuth, async (req, res) => {
 });
 
 app.put("/api/ots/:id", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: "OT no encontrada" });
   const existing = rowToOt(existingRows[0]);
+  if (!acc.isAdmin && existing.sucursal !== acc.sucursal) {
+    return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
+  }
   const b = req.body || {};
   const merged = { ...existing, ...b };
+  // Un usuario que no sea Administrador no puede mover la OT a otra sucursal.
+  if (!acc.isAdmin) merged.sucursal = acc.sucursal;
   await pool.query(
     `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, fecha_entrega=$4, cliente=$5, modelo=$6, sucursal=$7,
      etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, check_lavado=$13, updated_at=now() WHERE id=$14`,
@@ -287,6 +324,12 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/ots/:id", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
+  const { rows: existingRows } = await pool.query("SELECT sucursal FROM ots WHERE id=$1", [req.params.id]);
+  if (existingRows[0] && !acc.isAdmin && existingRows[0].sucursal !== acc.sucursal) {
+    return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
+  }
   await pool.query("DELETE FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ok: true });
 });
@@ -301,11 +344,15 @@ function rowToFoto(r) {
 }
 
 app.get("/api/ots/:id/fotos", requireAuth, async (req, res) => {
+  const denied = await checkOtAccess(req, req.params.id);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const { rows } = await pool.query("SELECT * FROM ot_fotos WHERE ot_id=$1 ORDER BY created_at", [req.params.id]);
   res.json({ fotos: rows.map(rowToFoto) });
 });
 
 app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
+  const denied = await checkOtAccess(req, req.params.id);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const { dataUrl } = req.body || {};
   if (!dataUrl) return res.status(400).json({ error: "Falta la imagen" });
   if ((await contarFotos(req.params.id)) >= 4) return res.status(400).json({ error: "Ya hay 4 fotos en esta OT (máximo permitido)" });
@@ -319,6 +366,8 @@ app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/ots/:id/fotos/:fotoId", requireAuth, async (req, res) => {
+  const denied = await checkOtAccess(req, req.params.id);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   await pool.query("DELETE FROM ot_fotos WHERE id=$1 AND ot_id=$2", [req.params.fotoId, req.params.id]);
   res.json({ ok: true });
 });
@@ -503,25 +552,29 @@ app.post("/api/citas/sincronizar", requireAuth, async (req, res) => {
 });
 
 app.get("/api/citas", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { desde, hasta } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
-  const { rows } = await pool.query(
-    "SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 ORDER BY fecha_hora",
-    [desde, hasta]
-  );
+  const { rows } = acc.isAdmin
+    ? await pool.query("SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 ORDER BY fecha_hora", [desde, hasta])
+    : await pool.query("SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 AND sucursal=$3 ORDER BY fecha_hora", [desde, hasta, acc.sucursal]);
   res.json({ citas: rows.map(rowToCita) });
 });
 
 app.post("/api/citas", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const b = req.body || {};
   if (!b.fechaHora) return res.status(400).json({ error: "Falta la fecha y hora de la cita" });
   const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
   const id = uid("cita");
+  const sucursalFinal = acc.isAdmin ? (b.sucursal || SUCURSALES[0]) : acc.sucursal;
   await pool.query(
     `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10, now())`,
     [id, b.patente || "", b.cliente || "", b.telefono || "", b.modelo || "", b.fechaHora,
-     b.sucursal || SUCURSALES[0], TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
+     sucursalFinal, TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
      b.notas || "", urows[0] ? urows[0].nombre : ""]
   );
   const { rows } = await pool.query("SELECT * FROM citas WHERE id=$1", [id]);
@@ -529,11 +582,17 @@ app.post("/api/citas", requireAuth, async (req, res) => {
 });
 
 app.put("/api/citas/:id", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows: existingRows } = await pool.query("SELECT * FROM citas WHERE id=$1", [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: "Cita no encontrada" });
   const existing = rowToCita(existingRows[0]);
+  if (!acc.isAdmin && existing.sucursal !== acc.sucursal) {
+    return res.status(403).json({ error: "Esta cita pertenece a otra sucursal — no tienes acceso a ella" });
+  }
   const b = req.body || {};
   const merged = { ...existing, ...b };
+  if (!acc.isAdmin) merged.sucursal = acc.sucursal;
   await pool.query(
     `UPDATE citas SET patente=$1, cliente=$2, telefono=$3, modelo=$4, fecha_hora=$5, sucursal=$6, tipo=$7, estado=$8, notas=$9, ot_id=$10 WHERE id=$11`,
     [merged.patente, merged.cliente, merged.telefono, merged.modelo, merged.fechaHora, merged.sucursal,
@@ -546,12 +605,20 @@ app.put("/api/citas/:id", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/citas/:id", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
+  const { rows: existingRows } = await pool.query("SELECT sucursal FROM citas WHERE id=$1", [req.params.id]);
+  if (existingRows[0] && !acc.isAdmin && existingRows[0].sucursal !== acc.sucursal) {
+    return res.status(403).json({ error: "Esta cita pertenece a otra sucursal — no tienes acceso a ella" });
+  }
   await pool.query("DELETE FROM citas WHERE id=$1", [req.params.id]);
   res.json({ ok: true });
 });
 
 // --- Acceso por QR para técnicos (sin login, pensado para celular) ---
 app.get("/api/ots/:id/qr", requireAuth, async (req, res) => {
+  const denied = await checkOtAccess(req, req.params.id);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "OT no encontrada" });
   const ot = rowToOt(rows[0]);
