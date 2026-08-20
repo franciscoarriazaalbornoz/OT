@@ -43,6 +43,7 @@ function rowToOt(r) {
     cliente: r.cliente || "", modelo: r.modelo || "", sucursal: r.sucursal || "",
     etapa: r.etapa, responsable: r.responsable || "", prioridad: r.prioridad || "normal",
     tipo: r.tipo || "general",
+    checkLavado: r.check_lavado === true,
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
   };
@@ -91,6 +92,7 @@ async function initDb() {
   // Migración: agrega la columna de fecha/hora de entrega si la tabla ya existía sin ella
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'general';`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_lavado BOOLEAN DEFAULT false;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -270,11 +272,11 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const merged = { ...existing, ...b };
   await pool.query(
     `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, fecha_entrega=$4, cliente=$5, modelo=$6, sucursal=$7,
-     etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, updated_at=now() WHERE id=$13`,
+     etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, check_lavado=$13, updated_at=now() WHERE id=$14`,
     [merged.numero, merged.patente, merged.fechaIngreso || null, merged.fechaEntrega || null, merged.cliente, merged.modelo,
      merged.sucursal, merged.etapa, merged.responsable, merged.prioridad,
      TIPOS_TRABAJO.some(t=>t.value===merged.tipo) ? merged.tipo : "general",
-     merged.notas, req.params.id]
+     merged.notas, merged.checkLavado === true, req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (merged.etapa !== existing.etapa) {
@@ -593,6 +595,15 @@ app.get("/api/public/roster", async (req, res) => {
   res.json({ roster: rows });
 });
 
+app.put("/api/public/ot/:id/check-lavado", async (req, res) => {
+  const { rows } = await pool.query("SELECT id FROM ots WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
+  const { value } = req.body || {};
+  await pool.query("UPDATE ots SET check_lavado=$1, updated_at=now() WHERE id=$2", [value === true, req.params.id]);
+  const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
+  res.json({ ot: rowToOt(updated[0]) });
+});
+
 app.put("/api/public/ot/:id/stage", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
@@ -660,6 +671,21 @@ app.get("/api/qr/consulta", requireAuth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: "No se pudo generar el código QR" });
   }
+});
+
+app.get("/pantalla", (req, res) => { res.sendFile(path.join(__dirname, "public", "pantalla.html")); });
+
+app.get("/api/public/pantalla", async (req, res) => {
+  const sucursal = req.query.sucursal || "";
+  if (!sucursal || !SUCURSALES.includes(sucursal)) {
+    return res.status(400).json({ error: "Falta indicar una sucursal válida en el link", sucursales: SUCURSALES });
+  }
+  const { rows } = await pool.query("SELECT * FROM ots WHERE sucursal=$1 ORDER BY updated_at DESC", [sucursal]);
+  const ots = rows.map(rowToOt).map(o => ({
+    numero: o.numero, patente: o.patente, cliente: o.cliente, modelo: o.modelo,
+    etapa: o.etapa, prioridad: o.prioridad, tipo: o.tipo, fechaEntrega: o.fechaEntrega
+  }));
+  res.json({ sucursal, ots, stages: STAGES, tipos: TIPOS_TRABAJO });
 });
 
 app.get("/consulta", (req, res) => { res.sendFile(path.join(__dirname, "public", "consulta.html")); });
