@@ -252,6 +252,62 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
   res.json({ user: publicUser(newUser) });
 });
 
+app.post("/api/users/importar-excel", requireAuth, requireAdmin, async (req, res) => {
+  const { fileBase64 } = req.body || {};
+  if (!fileBase64) return res.status(400).json({ error: "Falta el archivo" });
+
+  let rows;
+  try {
+    const base64Clean = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
+    const buffer = Buffer.from(base64Clean, "base64");
+    const wb = XLSX.read(buffer, { type: "buffer" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+  } catch (e) {
+    return res.status(400).json({ error: "No se pudo leer el archivo. ¿Es un Excel o CSV válido?" });
+  }
+  if (rows.length < 2) return res.status(400).json({ error: "El archivo no tiene filas de datos." });
+
+  const colMap = mapearColumnas(rows[0], {
+    usuario: ["usuario", "username", "nombre usuario"],
+    nombre: ["nombre", "nombre completo"],
+    rol: ["rol"],
+    sucursal: ["sucursal"],
+    clave: ["clave", "clave_inicial", "clave inicial", "password"]
+  });
+
+  let creados = 0, existentes = 0;
+  const errores = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every(c => c === "" || c === null || c === undefined)) continue;
+    const get = (campo) => colMap[campo] !== undefined ? String(row[colMap[campo]] || "").trim() : "";
+
+    const username = get("usuario").toLowerCase();
+    const nombre = get("nombre");
+    const rol = get("rol");
+    const sucursal = get("sucursal");
+    const clave = get("clave") || "taller2026";
+
+    if (!username || !nombre) { errores.push(`Fila ${i+1}: falta usuario o nombre.`); continue; }
+    if (!ROLES.includes(rol)) { errores.push(`Fila ${i+1} (${username}): rol "${rol}" no reconocido.`); continue; }
+    if (sucursal && !SUCURSALES.includes(sucursal)) { errores.push(`Fila ${i+1} (${username}): sucursal "${sucursal}" no reconocida.`); continue; }
+
+    const existing = await pool.query("SELECT id FROM users WHERE username=$1", [username]);
+    if (existing.rows[0]) { existentes++; continue; }
+
+    await pool.query(
+      `INSERT INTO users (id, username, password_hash, nombre, rol, sucursal, must_change_password)
+       VALUES ($1,$2,$3,$4,$5,$6,true)`,
+      [uid("u"), username, bcrypt.hashSync(clave, 10), nombre, rol, sucursal || ""]
+    );
+    creados++;
+  }
+
+  res.json({ creados, existentes, totalFilas: rows.length - 1, errores });
+});
+
 app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
   if (req.params.id === req.session.userId) return res.status(400).json({ error: "No puedes eliminar tu propio usuario" });
   await pool.query("DELETE FROM users WHERE id=$1", [req.params.id]);
@@ -401,11 +457,12 @@ const HEADER_ALIASES = {
   notas: ["notas", "observaciones", "comentarios"]
 };
 
-function mapearColumnas(headerRow) {
+function mapearColumnas(headerRow, aliases) {
+  const aliasMap = aliases || HEADER_ALIASES;
   const map = {};
   headerRow.forEach((raw, idx) => {
     const norm = normalizarHeader(raw);
-    for (const [campo, alias] of Object.entries(HEADER_ALIASES)) {
+    for (const [campo, alias] of Object.entries(aliasMap)) {
       if (alias.includes(norm) && map[campo] === undefined) map[campo] = idx;
     }
   });
