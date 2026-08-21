@@ -734,7 +734,32 @@ app.delete("/api/public/ot/:id/fotos/:fotoId", async (req, res) => {
 });
 
 app.get("/api/public/roster", async (req, res) => {
-  const { rows } = await pool.query("SELECT nombre, rol FROM users ORDER BY nombre");
+  const { sucursal, rol } = req.query;
+  // El rol Administrador nunca aparece en esta lista pública, sin importar el filtro —
+  // el "quién hizo el cambio" del taller es siempre una persona operativa, no la cuenta de gestión.
+
+  // Sin filtros: comportamiento anterior (compatibilidad con otras pantallas que lo usen así).
+  if (!sucursal && !rol) {
+    const { rows } = await pool.query("SELECT nombre, rol FROM users WHERE rol<>'Administrador' ORDER BY nombre");
+    return res.json({ roster: rows });
+  }
+
+  const condiciones = ["rol<>'Administrador'"];
+  const params = [];
+  if (sucursal) { params.push(sucursal); condiciones.push(`sucursal=$${params.length}`); }
+  if (rol) { params.push(rol); condiciones.push(`rol=$${params.length}`); }
+  const where = `WHERE ${condiciones.join(" AND ")}`;
+
+  let { rows } = await pool.query(`SELECT nombre, rol FROM users ${where} ORDER BY nombre`, params);
+
+  // Respaldo: si el filtro por rol+sucursal queda vacío (nadie de ese rol cargado en esa sucursal
+  // todavía), no dejamos al técnico sin ninguna opción — mostramos toda la sucursal en su lugar
+  // (sigue sin incluir al Administrador).
+  if (rows.length === 0 && sucursal) {
+    const fallback = await pool.query("SELECT nombre, rol FROM users WHERE sucursal=$1 AND rol<>'Administrador' ORDER BY nombre", [sucursal]);
+    rows = fallback.rows;
+  }
+
   res.json({ roster: rows });
 });
 
