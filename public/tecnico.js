@@ -65,6 +65,29 @@ async function deleteFoto(fotoId){
   }catch(e){ /* silencioso */ }
 }
 
+async function loadRoster(){
+  const sel = document.getElementById("actorSelect");
+  const seleccionActual = sel.value;
+  // La sucursal ya está definida por la OT. El rol esperado depende de la etapa:
+  // en "Lavado" se muestra solo a los lavadores; en cualquier otra etapa, solo a los técnicos.
+  const rolFiltro = stages[ot.etapa] === "Lavado" ? "Lavado y entrega" : "Mecánico";
+  let roster = [];
+  try{
+    const params = new URLSearchParams({ sucursal: ot.sucursal || "", rol: rolFiltro });
+    const rosterRes = await fetch(`/api/public/roster?${params.toString()}`);
+    const rosterData = await rosterRes.json();
+    roster = rosterData.roster || [];
+  }catch(e){ /* silencioso: se deja el select como estaba */ }
+
+  sel.innerHTML = `<option value="">Selecciona tu nombre</option>`;
+  roster.forEach(u=>{
+    const o = document.createElement("option");
+    o.value = u.nombre; o.textContent = `${u.nombre} (${u.rol})`;
+    sel.appendChild(o);
+  });
+  if(seleccionActual) sel.value = seleccionActual;
+}
+
 async function load(){
   try{
     const res = await fetch(`/api/public/ot/${otId}`);
@@ -72,15 +95,9 @@ async function load(){
     const data = await res.json();
     ot = data.ot; stages = data.stages; fotos = data.fotos || [];
 
-    const rosterRes = await fetch("/api/public/roster");
-    const rosterData = await rosterRes.json();
-    const sel = document.getElementById("actorSelect");
-    rosterData.roster.forEach(u=>{
-      const o = document.createElement("option");
-      o.value = u.nombre; o.textContent = `${u.nombre} (${u.rol})`;
-      sel.appendChild(o);
-    });
     const savedActor = sessionStorage.getItem("ot-actor-nombre");
+    await loadRoster();
+    const sel = document.getElementById("actorSelect");
     if(savedActor) sel.value = savedActor;
     sel.addEventListener("change", ()=> sessionStorage.setItem("ot-actor-nombre", sel.value));
 
@@ -154,6 +171,7 @@ async function updateStage(etapa){
     if(!res.ok) throw new Error(data.error || "No se pudo guardar");
     ot = data.ot; stages = data.stages;
     render();
+    await loadRoster();
     msg.textContent = "Actualizado ✓";
     msg.className = "msg ok";
   }catch(e){
