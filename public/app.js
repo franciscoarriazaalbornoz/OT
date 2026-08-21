@@ -256,6 +256,7 @@ function render(){
           ${tipo ? `<span class="chip-tipo" style="background:#${tipo.color}">${escapeHtml(tipo.label)}</span>` : ""}
           ${o.prioridad==="alta" ? `<span class="chip-alta">Alta</span>` : ""}
           ${o.checkLavado ? `<span class="card-lavado-ok">✓ Lavado OK</span>` : ""}
+          ${o.checkPptoAutorizado ? `<span class="card-ppto-ok autorizado">Ppto: OK</span>` : (o.checkPptoRealizado ? `<span class="card-ppto-ok pendiente">Ppto: OK</span>` : "")}
         </div>
         <div class="card-foot">
           <span class="card-suc">${escapeHtml(o.sucursal||"—")}</span>
@@ -294,6 +295,11 @@ function openNew(){
   document.getElementById("formError").style.display = "none";
   ["f_numero","f_patente","f_cliente","f_modelo","f_responsable","f_notas"].forEach(id=>document.getElementById(id).value="");
   document.getElementById("f_check_lavado").checked = false;
+  document.getElementById("f_check_ppto_realizado").checked = false;
+  document.getElementById("f_check_ppto_autorizado").checked = false;
+  const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Repuestos"].includes(currentUser.rol);
+  document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
+  document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
@@ -328,6 +334,13 @@ function openEdit(id){
   document.getElementById("f_tipo").value = o.tipo||"";
   document.getElementById("f_notas").value = o.notas||"";
   document.getElementById("f_check_lavado").checked = !!o.checkLavado;
+  document.getElementById("f_check_ppto_realizado").checked = !!o.checkPptoRealizado;
+  document.getElementById("f_check_ppto_autorizado").checked = !!o.checkPptoAutorizado;
+  {
+    const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Repuestos"].includes(currentUser.rol);
+    document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
+    document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
+  }
   document.getElementById("fotosSection").style.display = "block";
   document.getElementById("fotosGrid").innerHTML = "";
   loadFotos();
@@ -355,7 +368,9 @@ async function saveForm(){
     prioridad: document.getElementById("f_prioridad").value,
     tipo: document.getElementById("f_tipo").value,
     notas: document.getElementById("f_notas").value.trim(),
-    checkLavado: document.getElementById("f_check_lavado").checked
+    checkLavado: document.getElementById("f_check_lavado").checked,
+    checkPptoRealizado: document.getElementById("f_check_ppto_realizado").checked,
+    checkPptoAutorizado: document.getElementById("f_check_ppto_autorizado").checked
   };
 
   try{
@@ -923,5 +938,15 @@ document.getElementById("citasConfigExcelBtn").addEventListener("click", abrirCo
 document.getElementById("excelConfigCancelBtn").addEventListener("click", cerrarConfigExcel);
 document.getElementById("excelConfigSaveBtn").addEventListener("click", guardarConfigExcel);
 document.getElementById("excelConfigOverlay").addEventListener("click",(e)=>{ if(e.target.id==="excelConfigOverlay") cerrarConfigExcel(); });
+
+// Mantiene el orden visual de la OT: convierte a mayúsculas mientras se escribe,
+// conservando la posición del cursor (el servidor igual lo normaliza al guardar).
+document.querySelectorAll(".input-upper").forEach(el=>{
+  el.addEventListener("input", ()=>{
+    const pos = el.selectionStart;
+    el.value = el.value.toUpperCase();
+    if(pos !== null && el.setSelectionRange) el.setSelectionRange(pos, pos);
+  });
+});
 
 tryResumeSession();

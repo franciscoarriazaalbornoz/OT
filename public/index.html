@@ -206,26 +206,34 @@
   <div class="modal">
     <h2 id="modalTitle">Nueva OT</h2>
     <div class="form-error" id="formError"></div>
-    <div class="field"><label>Número de OT</label><input id="f_numero" placeholder="Ej: 45213"></div>
+    <div class="field"><label>Número de OT</label><input id="f_numero" placeholder="Ej: 45213" class="input-upper"></div>
     <div class="grid2">
-      <div class="field"><label>Patente</label><input id="f_patente" placeholder="AB1234"></div>
+      <div class="field"><label>Patente</label><input id="f_patente" placeholder="AB1234" class="input-upper"></div>
       <div class="field"><label>Fecha ingreso</label><input id="f_fecha" type="date"></div>
     </div>
-    <div class="field"><label>Cliente</label><input id="f_cliente" placeholder="Nombre del cliente"></div>
-    <div class="field"><label>Modelo / vehículo</label><input id="f_modelo" placeholder="Ej: Toyota Corolla 2021"></div>
+    <div class="field"><label>Cliente</label><input id="f_cliente" placeholder="Nombre del cliente" class="input-upper"></div>
+    <div class="field"><label>Modelo / vehículo</label><input id="f_modelo" placeholder="Ej: Toyota Corolla 2021" class="input-upper"></div>
     <div class="field"><label>Tipo de trabajo</label><select id="f_tipo"></select></div>
     <div class="grid2">
       <div class="field"><label>Sucursal</label><select id="f_sucursal"></select></div>
       <div class="field"><label>Etapa</label><select id="f_etapa"></select></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Responsable</label><input id="f_responsable" placeholder="Nombre"></div>
+      <div class="field"><label>Responsable</label><input id="f_responsable" placeholder="Nombre" class="input-upper"></div>
       <div class="field"><label>Prioridad</label>
         <select id="f_prioridad"><option value="normal">Normal</option><option value="alta">Alta</option></select>
       </div>
     </div>
     <div class="field"><label>Fecha y hora de entrega (estimada)</label><input id="f_fecha_entrega" type="datetime-local"></div>
-    <div class="field"><label>Notas</label><textarea id="f_notas" rows="3" placeholder="Observaciones..."></textarea></div>
+    <div class="field"><label>Notas</label><textarea id="f_notas" rows="3" placeholder="Observaciones..." class="input-upper"></textarea></div>
+    <div class="field check-lavado-field">
+      <label class="checkbox-label"><input type="checkbox" id="f_check_ppto_realizado"> Presupuesto realizado</label>
+      <span class="field-hint">Uso interno — solo Asesor de servicio, Jefe de taller y Repuestos pueden marcarlo. Nunca se muestra al cliente.</span>
+    </div>
+    <div class="field check-lavado-field">
+      <label class="checkbox-label"><input type="checkbox" id="f_check_ppto_autorizado"> Presupuesto autorizado por el cliente</label>
+      <span class="field-hint">Uso interno — solo Asesor de servicio, Jefe de taller y Repuestos pueden marcarlo. Nunca se muestra al cliente.</span>
+    </div>
     <div class="field check-lavado-field">
       <label class="checkbox-label"><input type="checkbox" id="f_check_lavado"> Check OK de lavado</label>
       <span class="field-hint">Uso interno del taller — nunca se muestra al cliente.</span>

@@ -107,6 +107,18 @@ function render(){
     document.getElementById("lavadoCheckInput").checked = !!ot.checkLavado;
   }
 
+  const pptoBox = document.getElementById("pptoCheckBox");
+  const esEtapaPpto = stages[ot.etapa] === "Presupuesto/Aprobación";
+  pptoBox.style.display = esEtapaPpto ? "block" : "none";
+  if(esEtapaPpto){
+    const realizadoOn = !!ot.checkPptoRealizado;
+    const autorizadoOn = !!ot.checkPptoAutorizado;
+    document.getElementById("pptoRealizadoDot").className = "ppto-status-dot" + (realizadoOn ? " on" : "");
+    document.getElementById("pptoRealizadoLabel").parentElement.className = "ppto-status-row" + (realizadoOn ? " on" : "");
+    document.getElementById("pptoAutorizadoDot").className = "ppto-status-dot" + (autorizadoOn ? " on" : "");
+    document.getElementById("pptoAutorizadoLabel").parentElement.className = "ppto-status-row" + (autorizadoOn ? " on" : "");
+  }
+
   document.getElementById("backBtn").disabled = ot.etapa === 0;
   document.getElementById("advanceBtn").disabled = ot.etapa === stages.length - 1;
   document.getElementById("advanceBtn").textContent = ot.etapa === stages.length - 1
@@ -170,6 +182,8 @@ async function toggleCheckLavado(){
     msg.className = "msg error";
   }
 }
+// Nota: el check de presupuesto es solo de consulta en esta pantalla — no editable desde el QR.
+
 document.getElementById("lavadoCheckInput").addEventListener("change", toggleCheckLavado);
 
 document.getElementById("advanceBtn").addEventListener("click", ()=>{
