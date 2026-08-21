@@ -20,6 +20,8 @@ const pool = new Pool({
 const STAGES = ["Recepción","Diagnóstico","Presupuesto/Aprobación","Repuestos","Reparación","Control de calidad","Lavado","Entrega"];
 const SUCURSALES = ["Summit Colón","Rancagua","Matta","Antofagasta","Calama"];
 const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador"];
+// Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
+const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
 const TIPOS_TRABAJO = [
   { value: "mantencion", label: "Mantención", color: "EB0A1E" },
   { value: "general", label: "Trabajo general", color: "E8B400" },
@@ -44,6 +46,8 @@ function rowToOt(r) {
     etapa: r.etapa, responsable: r.responsable || "", prioridad: r.prioridad || "normal",
     tipo: r.tipo || "general",
     checkLavado: r.check_lavado === true,
+    checkPptoRealizado: r.check_ppto_realizado === true,
+    checkPptoAutorizado: r.check_ppto_autorizado === true,
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
   };
@@ -52,6 +56,10 @@ function publicUser(u) {
   return { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, sucursal: u.sucursal, mustChangePassword: !!u.mustChangePassword };
 }
 function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+// Mantiene el orden visual de la OT: los campos de texto libre se guardan en mayúsculas.
+// Nunca se aplica a campos de lista fija (sucursal, tipo, rol, etc.) para no romper su coincidencia.
+function up(v) { return v === undefined || v === null ? v : String(v).toUpperCase(); }
 
 async function logCambioEtapa(otId, etapaAnterior, etapaNueva, actor, origen) {
   await pool.query(
@@ -93,6 +101,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS fecha_entrega TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'general';`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_lavado BOOLEAN DEFAULT false;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_realizado BOOLEAN DEFAULT false;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_autorizado BOOLEAN DEFAULT false;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -340,10 +350,10 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   await pool.query(
     `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, tipo, notas, creado_por, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`,
-    [id, String(b.numero).trim(), b.patente || "", fecha, b.fechaEntrega || null, b.cliente || "", b.modelo || "",
-     sucursalFinal, etapa, b.responsable || "", b.prioridad === "alta" ? "alta" : "normal",
+    [id, up(String(b.numero).trim()), up(b.patente) || "", fecha, b.fechaEntrega || null, up(b.cliente) || "", up(b.modelo) || "",
+     sucursalFinal, etapa, up(b.responsable) || "", b.prioridad === "alta" ? "alta" : "normal",
      TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
-     b.notas || "", user ? user.nombre : ""]
+     up(b.notas) || "", user ? user.nombre : ""]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [id]);
   await logCambioEtapa(id, null, etapa, user ? user.nombre : "", "creacion");
@@ -363,13 +373,22 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const merged = { ...existing, ...b };
   // Un usuario que no sea Administrador no puede mover la OT a otra sucursal.
   if (!acc.isAdmin) merged.sucursal = acc.sucursal;
+  // El check de presupuesto solo lo puede marcar/desmarcar Asesor de servicio, Jefe de taller,
+  // Repuestos o Administrador — cualquier otro rol que envíe un cambio ahí queda ignorado,
+  // sin afectar el resto de los campos que sí haya editado.
+  if (!acc.isAdmin && !ROLES_PPTO.includes(acc.rol)) {
+    merged.checkPptoRealizado = existing.checkPptoRealizado;
+    merged.checkPptoAutorizado = existing.checkPptoAutorizado;
+  }
   await pool.query(
     `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, fecha_entrega=$4, cliente=$5, modelo=$6, sucursal=$7,
-     etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, check_lavado=$13, updated_at=now() WHERE id=$14`,
-    [merged.numero, merged.patente, merged.fechaIngreso || null, merged.fechaEntrega || null, merged.cliente, merged.modelo,
-     merged.sucursal, merged.etapa, merged.responsable, merged.prioridad,
+     etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, check_lavado=$13,
+     check_ppto_realizado=$14, check_ppto_autorizado=$15, updated_at=now() WHERE id=$16`,
+    [up(merged.numero), up(merged.patente), merged.fechaIngreso || null, merged.fechaEntrega || null, up(merged.cliente), up(merged.modelo),
+     merged.sucursal, merged.etapa, up(merged.responsable), merged.prioridad,
      TIPOS_TRABAJO.some(t=>t.value===merged.tipo) ? merged.tipo : "general",
-     merged.notas, merged.checkLavado === true, req.params.id]
+     up(merged.notas), merged.checkLavado === true,
+     merged.checkPptoRealizado === true, merged.checkPptoAutorizado === true, req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (merged.etapa !== existing.etapa) {
@@ -727,6 +746,11 @@ app.put("/api/public/ot/:id/check-lavado", async (req, res) => {
   const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updated[0]) });
 });
+
+// Nota: el check de presupuesto NO tiene endpoint público de escritura a propósito.
+// El técnico (QR sin login) solo puede VERLO — ya viaja incluido en GET /api/public/ot/:id.
+// Marcarlo/desmarcarlo está restringido a Asesor de servicio, Jefe de taller, Repuestos y
+// Administrador, únicamente desde la app de escritorio (con sesión), vía PUT /api/ots/:id.
 
 app.put("/api/public/ot/:id/stage", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
