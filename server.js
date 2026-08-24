@@ -546,6 +546,23 @@ function mapearColumnas(headerRow, aliases) {
   return map;
 }
 
+// Construye la fecha/hora correcta en UTC a partir de una hora de RELOJ DE CHILE (America/Santiago),
+// sin depender de en qué zona horaria esté corriendo el servidor (Render corre en UTC por defecto,
+// así que construir la fecha "a la ingenua" con new Date(año,mes,dia,hh,mm) la deja mal — trata la
+// hora de Chile como si ya fuera UTC). Respeta automáticamente el horario de verano/invierno chileno.
+function crearFechaChile(anio, mes, dia, hh, mm) {
+  const pruebaUTC = new Date(Date.UTC(anio, mes, dia, hh, mm, 0));
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Santiago", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+  });
+  const partes = fmt.formatToParts(pruebaUTC).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  const horaChile = partes.hour === "24" ? 0 : parseInt(partes.hour, 10);
+  const comoSiFueraUTC = Date.UTC(parseInt(partes.year,10), parseInt(partes.month,10)-1, parseInt(partes.day,10), horaChile, parseInt(partes.minute,10));
+  const offsetMs = comoSiFueraUTC - pruebaUTC.getTime();
+  return new Date(pruebaUTC.getTime() - offsetMs);
+}
+
 function excelDateToJSDate(v) {
   // xlsx con cellDates:true ya entrega Date de JS para celdas de fecha reales.
   if (v instanceof Date) return v;
@@ -596,6 +613,43 @@ function toDirectDownloadUrl(url) {
 
 const MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 
+// Corrige fechas nativas de Excel donde día y mes quedaron invertidos (pasa cuando quien
+// cargó esos datos tenía el Excel en formato mes/día en vez de día/mes chileno). Solo actúa
+// sobre celdas de fecha REAL de Excel (no texto, que ya se interpreta aparte como día/mes).
+// Usa como referencia las fechas de esa misma pestaña que NO tienen ninguna ambigüedad posible
+// (día > 12, así que no puede confundirse con un mes) y eran las más cercanas en la planilla —
+// si el intercambio día/mes acerca más esa fila a su referencia más cercana, se intercambia;
+// si no, se deja tal cual. Las filas sin ninguna ancla cercana no se tocan.
+function corregirFechasAmbiguas(rows, idxFecha) {
+  const anclas = [];
+  for (let i = 1; i < rows.length; i++) {
+    const v = rows[i][idxFecha];
+    if (v instanceof Date && v.getDate() > 12) anclas.push({ pos: i, mes: v.getMonth() + 1 });
+  }
+  if (anclas.length === 0) return;
+
+  for (let i = 1; i < rows.length; i++) {
+    const v = rows[i][idxFecha];
+    if (!(v instanceof Date)) continue;
+    const dia = v.getDate(), mes = v.getMonth() + 1;
+    if (dia > 12 || mes > 12 || dia === mes) continue; // sin ambigüedad, o da igual
+
+    let mejor = null, mejorDist = Infinity;
+    for (const a of anclas) {
+      const dist = Math.abs(a.pos - i);
+      if (dist < mejorDist) { mejorDist = dist; mejor = a; }
+    }
+    if (!mejor) continue;
+
+    const distCiclica = (a, b) => Math.min(Math.abs(a - b), 12 - Math.abs(a - b));
+    const distOriginal = distCiclica(mes, mejor.mes);
+    const distIntercambiada = distCiclica(dia, mejor.mes);
+    if (distIntercambiada < distOriginal) {
+      rows[i][idxFecha] = new Date(v.getFullYear(), dia - 1, mes);
+    }
+  }
+}
+
 function parsearFilasCitas(rows, colMap, sucursalFija) {
   const citas = [];
   const errores = [];
@@ -622,7 +676,7 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
       const horaStr = colMap.hora !== undefined ? (excelHoraToHHMM(get("hora")) || "09:00") : "09:00";
       if (fechaD && horaStr) {
         const [hh, mm] = horaStr.split(":").map(Number);
-        const combinado = new Date(fechaD.getFullYear(), fechaD.getMonth(), fechaD.getDate(), hh, mm, 0);
+        const combinado = crearFechaChile(fechaD.getFullYear(), fechaD.getMonth(), fechaD.getDate(), hh, mm);
         fechaHoraISO = combinado.toISOString();
       }
     }
@@ -682,6 +736,8 @@ function parsearExcelBuffer(buffer, acc) {
       if (!sucursalFija) continue; // pestaña que no corresponde a ninguna sucursal conocida
       if (acc && !acc.isAdmin && sucursalFija !== acc.sucursal) continue; // no es la sucursal del usuario
     }
+
+    if (colMap.fecha !== undefined) corregirFechasAmbiguas(rows, colMap.fecha);
 
     const { citas, errores } = parsearFilasCitas(rows, colMap, sucursalFija);
     resultado.citas.push(...citas);
