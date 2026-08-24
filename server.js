@@ -499,17 +499,40 @@ function normalizarHeader(h) {
 }
 
 const HEADER_ALIASES = {
-  fecha: ["fecha"],
-  hora: ["hora"],
+  fecha: ["fecha", "fecha cita", "fecha de cita", "fechacita"],
+  hora: ["hora", "hora cita", "hora de cita"],
   fechaHora: ["fechahora", "fecha y hora", "fecha/hora"],
-  patente: ["patente", "placa"],
-  cliente: ["cliente", "nombre", "nombre cliente"],
+  patente: ["patente", "placa", "ppu"],
+  cliente: ["cliente", "nombre", "nombre cliente", "nombre de cliente"],
   telefono: ["telefono", "fono", "celular", "contacto"],
   modelo: ["modelo", "vehiculo", "auto"],
+  marca: ["marca"],
   sucursal: ["sucursal"],
-  tipo: ["tipo", "tipo de trabajo", "tipotrabajo"],
+  tipo: ["tipo", "tipo de trabajo", "tipotrabajo", "descripcion", "descripcion trabajo"],
   notas: ["notas", "observaciones", "comentarios"]
 };
+
+// Traduce texto libre de la columna "Descripción" (o similar) al tipo de trabajo interno.
+// Ej: "TRABAJO GENERAL" -> general, "MANTENCION" -> mantencion, "PRIMER SERVICIO" -> garantia.
+function mapearTipoDesdeTexto(texto) {
+  const norm = normalizarHeader(texto);
+  if (!norm) return "general";
+  if (norm.includes("mantenc")) return "mantencion";
+  if (norm.includes("primer servicio") || norm.includes("garantia") || norm.includes("campana")) return "garantia";
+  if (norm.includes("dyp") || norm.includes("desaboll") || norm.includes("pintura")) return "dyp";
+  if (norm === "fir" || norm.includes(" fir") || norm.includes("fir ") || norm.startsWith("fir")) return "fir";
+  return "general";
+}
+
+// Encuentra a qué sucursal conocida corresponde el nombre de una pestaña del Excel
+// (ej: la pestaña "Colón" calza con nuestra sucursal "Summit Colón").
+function nombreSucursalDesdeHoja(nombreHoja) {
+  const norm = normalizarHeader(nombreHoja);
+  return SUCURSALES.find(s => {
+    const ns = normalizarHeader(s);
+    return ns.includes(norm) || norm.includes(ns);
+  }) || null;
+}
 
 function mapearColumnas(headerRow, aliases) {
   const aliasMap = aliases || HEADER_ALIASES;
@@ -527,7 +550,20 @@ function excelDateToJSDate(v) {
   // xlsx con cellDates:true ya entrega Date de JS para celdas de fecha reales.
   if (v instanceof Date) return v;
   if (typeof v === "string" && v.trim()) {
-    const d = new Date(v);
+    const s = v.trim();
+    // Formato chileno escrito como texto: DD/MM/YYYY o D/M/YYYY.
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const dia = parseInt(m[1], 10), mes = parseInt(m[2], 10), anio = parseInt(m[3], 10);
+      if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) return new Date(anio, mes - 1, dia);
+    }
+    // Variante con guion, a veces con la hora pegada al final: DD-MM-YYYY o "DD-MM-YYYY HH:MM".
+    const m2 = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+    if (m2) {
+      const dia = parseInt(m2[1], 10), mes = parseInt(m2[2], 10), anio = parseInt(m2[3], 10);
+      if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) return new Date(anio, mes - 1, dia);
+    }
+    const d = new Date(s);
     if (!isNaN(d.getTime())) return d;
   }
   return null;
@@ -558,13 +594,9 @@ function toDirectDownloadUrl(url) {
   return url;
 }
 
-function parsearExcelBuffer(buffer) {
-  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
-  if (rows.length < 2) return { citas: [], errores: ["El archivo no tiene filas de datos."] };
+const MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 
-  const colMap = mapearColumnas(rows[0]);
+function parsearFilasCitas(rows, colMap, sucursalFija) {
   const citas = [];
   const errores = [];
 
@@ -573,42 +605,104 @@ function parsearExcelBuffer(buffer) {
     if (!row || row.every(c => c === "" || c === null || c === undefined)) continue;
     const get = (campo) => colMap[campo] !== undefined ? row[colMap[campo]] : "";
 
+    // Fila divisoria de mes (ej: "MAYO" repetido en varias columnas, incluida a veces la de
+    // cliente en vez de la de fecha) — se ignora en silencio, no es una cita real.
+    const rawFecha = colMap.fecha !== undefined ? get("fecha") : null;
+    const rawCliente = colMap.cliente !== undefined ? get("cliente") : null;
+    const esDivisoria = (v) => typeof v === "string" && MESES_ES.includes(normalizarHeader(v));
+    if (esDivisoria(rawFecha) || esDivisoria(rawCliente)) continue;
+    if (typeof rawCliente === "string" && normalizarHeader(rawCliente).includes("sin agendamiento")) continue;
+
     let fechaHoraISO = null;
     if (colMap.fechaHora !== undefined) {
       const d = excelDateToJSDate(get("fechaHora"));
       if (d) fechaHoraISO = d.toISOString();
     } else if (colMap.fecha !== undefined) {
       const fechaD = excelDateToJSDate(get("fecha"));
-      const horaStr = colMap.hora !== undefined ? excelHoraToHHMM(get("hora")) : "09:00";
+      const horaStr = colMap.hora !== undefined ? (excelHoraToHHMM(get("hora")) || "09:00") : "09:00";
       if (fechaD && horaStr) {
         const [hh, mm] = horaStr.split(":").map(Number);
         const combinado = new Date(fechaD.getFullYear(), fechaD.getMonth(), fechaD.getDate(), hh, mm, 0);
         fechaHoraISO = combinado.toISOString();
       }
     }
+    if (!fechaHoraISO) {
+      // Filas divisorias tipo "ABRIL" / "MAYO" (rótulos de mes repetidos en varias columnas,
+      // sin cliente ni patente real) se ignoran en silencio — no son citas reales.
+      const tieneCliente = String(get("cliente") || "").trim() !== "";
+      const tienePatente = String(get("patente") || "").trim() !== "";
+      if (tieneCliente || tienePatente) errores.push(`Fila ${i+1}: no se pudo interpretar la fecha/hora.`);
+      continue;
+    }
 
-    if (!fechaHoraISO) { errores.push(`Fila ${i+1}: no se pudo interpretar la fecha/hora.`); continue; }
+    // Marca + Modelo combinados (ej: "TOYOTA" + "4RUNNER" -> "TOYOTA 4RUNNER").
+    const marca = colMap.marca !== undefined ? String(get("marca") || "").trim() : "";
+    const modeloRaw = String(get("modelo") || "").trim();
+    const modeloFinal = [marca, modeloRaw].filter(Boolean).join(" ").trim();
+
+    const sucursalFinal = sucursalFija || (colMap.sucursal !== undefined ? String(get("sucursal") || "").trim() : "");
+    const tipoTexto = get("tipo");
+    const tipoFinal = colMap.tipo !== undefined
+      ? (TIPOS_TRABAJO.some(t => t.value === normalizarHeader(tipoTexto)) ? normalizarHeader(tipoTexto) : mapearTipoDesdeTexto(tipoTexto))
+      : "general";
 
     citas.push({
       fechaHora: fechaHoraISO,
       patente: String(get("patente") || "").trim(),
       cliente: String(get("cliente") || "").trim(),
       telefono: String(get("telefono") || "").trim(),
-      modelo: String(get("modelo") || "").trim(),
-      sucursal: String(get("sucursal") || "").trim(),
-      tipo: TIPOS_TRABAJO.some(t => t.value === normalizarHeader(get("tipo"))) ? normalizarHeader(get("tipo")) : "general",
-      notas: String(get("notas") || "").trim()
+      modelo: modeloFinal,
+      sucursal: sucursalFinal,
+      tipo: tipoFinal,
+      notas: colMap.notas !== undefined ? String(get("notas") || "").trim() : ""
     });
   }
-  return { citas, errores, columnasDetectadas: Object.keys(colMap) };
+  return { citas, errores };
 }
 
-async function descargarYParsearExcel(url) {
+// Lee el Excel de citas soportando dos formatos:
+//  1) Una sola hoja con columna "Sucursal" explícita por fila.
+//  2) Una pestaña por sucursal, sin columna Sucursal (el nombre de la pestaña ES la sucursal) —
+//     formato real usado por Grupo Summit. En este caso, un usuario que no sea Administrador
+//     solo procesa la pestaña de SU propia sucursal; el resto de las pestañas se ignoran.
+function parsearExcelBuffer(buffer, acc) {
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const resultado = { citas: [], errores: [], columnasDetectadas: [] };
+
+  for (const nombreHoja of wb.SheetNames) {
+    const sheet = wb.Sheets[nombreHoja];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+    if (rows.length < 2) continue;
+    const colMap = mapearColumnas(rows[0]);
+    if (Object.keys(colMap).length === 0) continue; // pestaña sin columnas reconocibles (ej. un resumen), se ignora
+
+    let sucursalFija = null;
+    if (colMap.sucursal === undefined) {
+      sucursalFija = nombreSucursalDesdeHoja(nombreHoja);
+      if (!sucursalFija) continue; // pestaña que no corresponde a ninguna sucursal conocida
+      if (acc && !acc.isAdmin && sucursalFija !== acc.sucursal) continue; // no es la sucursal del usuario
+    }
+
+    const { citas, errores } = parsearFilasCitas(rows, colMap, sucursalFija);
+    resultado.citas.push(...citas);
+    resultado.errores.push(...errores.map(e => wb.SheetNames.length > 1 ? `[${nombreHoja}] ${e}` : e));
+    resultado.columnasDetectadas = Object.keys(colMap);
+  }
+
+  if (resultado.citas.length === 0 && resultado.errores.length === 0) {
+    const contexto = acc && !acc.isAdmin ? ` para tu sucursal (${acc.sucursal})` : "";
+    resultado.errores.push(`No se encontraron citas reconocibles${contexto}. Pestañas del archivo: ${wb.SheetNames.join(", ")}`);
+  }
+
+  return resultado;
+}
+
+async function descargarYParsearExcel(url, acc) {
   const directUrl = toDirectDownloadUrl(url);
   const res = await fetch(directUrl, { redirect: "follow" });
   if (!res.ok) throw new Error(`No se pudo descargar el archivo (HTTP ${res.status}). Verifica que el link sea público ("cualquiera con el link puede ver").`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  return parsearExcelBuffer(buffer);
+  return parsearExcelBuffer(buffer, acc);
 }
 
 // Aplica una lista de citas ya parseadas: crea las nuevas, actualiza las que ya existían
@@ -663,7 +757,7 @@ app.post("/api/citas/sincronizar", requireAuth, async (req, res) => {
 
   let parsed;
   try {
-    parsed = await descargarYParsearExcel(url);
+    parsed = await descargarYParsearExcel(url, acc);
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
@@ -687,7 +781,7 @@ app.post("/api/citas/importar-excel", requireAuth, async (req, res) => {
   try {
     const base64Clean = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
     const buffer = Buffer.from(base64Clean, "base64");
-    parsed = parsearExcelBuffer(buffer);
+    parsed = parsearExcelBuffer(buffer, acc);
   } catch (e) {
     return res.status(400).json({ error: "No se pudo leer el archivo. ¿Es un Excel o CSV válido?" });
   }
