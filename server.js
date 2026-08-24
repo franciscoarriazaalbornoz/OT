@@ -48,6 +48,7 @@ function rowToOt(r) {
     checkLavado: r.check_lavado === true,
     checkPptoRealizado: r.check_ppto_realizado === true,
     checkPptoAutorizado: r.check_ppto_autorizado === true,
+    trabajoIniciadoAt: r.trabajo_iniciado_at ? new Date(r.trabajo_iniciado_at).toISOString() : null,
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
   };
@@ -103,6 +104,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_lavado BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_realizado BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_autorizado BOOLEAN DEFAULT false;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS trabajo_iniciado_at TIMESTAMPTZ;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -768,6 +770,14 @@ app.put("/api/public/ot/:id/check-lavado", async (req, res) => {
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
   const { value } = req.body || {};
   await pool.query("UPDATE ots SET check_lavado=$1, updated_at=now() WHERE id=$2", [value === true, req.params.id]);
+  const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
+  res.json({ ot: rowToOt(updated[0]) });
+});
+
+app.put("/api/public/ot/:id/inicio-trabajo", async (req, res) => {
+  const { rows } = await pool.query("SELECT id FROM ots WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
+  await pool.query("UPDATE ots SET trabajo_iniciado_at=now() WHERE id=$1", [req.params.id]);
   const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updated[0]) });
 });
