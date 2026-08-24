@@ -553,6 +553,7 @@ function openCitas(){
   document.getElementById("citasNewBtn").style.display = gestiona ? "inline-block" : "none";
   document.getElementById("citasSyncBtn").style.display = gestiona ? "inline-block" : "none";
   document.getElementById("citasImportarArchivoBtn").style.display = gestiona ? "inline-block" : "none";
+  document.getElementById("citasBorrarTodasBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   loadCitas();
 }
 function closeCitas(){
@@ -918,6 +919,27 @@ async function importarCitasArchivo(file){
   }
 }
 
+async function borrarTodasLasCitas(){
+  const suc = document.getElementById("citasFilterSucursal").value;
+  const alcance = suc ? `de ${suc}` : "de TODAS las sucursales";
+  const confirmacion = prompt(`Esto va a borrar TODAS las citas ${alcance} — no se puede deshacer.\n\nEscribe BORRAR para confirmar:`);
+  if (confirmacion !== "BORRAR") return;
+  const msg = document.getElementById("citasSyncMsg");
+  msg.style.display = "block";
+  msg.className = "sync-msg";
+  msg.textContent = "Borrando...";
+  try{
+    const qs = suc ? `?sucursal=${encodeURIComponent(suc)}` : "";
+    const data = await api(`/api/citas${qs}`, { method:"DELETE" });
+    msg.className = "sync-msg ok";
+    msg.textContent = `Listo — ${data.eliminadas} cita(s) eliminada(s).`;
+    loadCitas();
+  }catch(e){
+    msg.className = "sync-msg error";
+    msg.textContent = e.message;
+  }
+}
+
 document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("pwSaveBtn").addEventListener("click", savePassword);
@@ -975,6 +997,7 @@ document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e
 
 document.getElementById("citasSyncBtn").addEventListener("click", sincronizarExcel);
 document.getElementById("citasImportarArchivoBtn").addEventListener("click", ()=>document.getElementById("citasImportarArchivoInput").click());
+document.getElementById("citasBorrarTodasBtn").addEventListener("click", borrarTodasLasCitas);
 document.getElementById("citasImportarArchivoInput").addEventListener("change", (e)=>{
   const file = e.target.files[0];
   if(file) importarCitasArchivo(file);
