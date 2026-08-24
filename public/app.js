@@ -542,7 +542,7 @@ function weekRange(d){
 function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
 
 function puedeGestionarCitas(){
-  return currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller"].includes(currentUser.rol);
+  return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller"].includes(currentUser.rol);
 }
 
 function openCitas(){
