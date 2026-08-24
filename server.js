@@ -764,28 +764,61 @@ async function descargarYParsearExcel(url, acc) {
 // Aplica una lista de citas ya parseadas: crea las nuevas, actualiza las que ya existían
 // (mismo criterio que la sincronización por link: patente + fecha/hora exacta).
 async function upsertCitasParseadas(citas, actor) {
-  let creadas = 0, actualizadas = 0;
-  for (const c of citas) {
-    const { rows: existentes } = await pool.query(
-      "SELECT id FROM citas WHERE fecha_hora=$1 AND UPPER(patente)=UPPER($2)",
-      [c.fechaHora, c.patente || ""]
-    );
-    if (existentes[0]) {
-      await pool.query(
-        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6 WHERE id=$7`,
-        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, existentes[0].id]
-      );
-      actualizadas++;
-    } else {
-      await pool.query(
-        `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10, now())`,
-        [uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)"]
-      );
-      creadas++;
-    }
+  if (citas.length === 0) return { creadas: 0, actualizadas: 0 };
+
+  // 1) Una sola consulta para saber cuáles ya existen (en vez de una consulta por cita).
+  const sucursales = [...new Set(citas.map(c => c.sucursal || SUCURSALES[0]))];
+  const { rows: existentesRows } = await pool.query(
+    "SELECT id, patente, fecha_hora FROM citas WHERE sucursal = ANY($1::text[])",
+    [sucursales]
+  );
+  const mapaExistentes = new Map();
+  for (const r of existentesRows) {
+    const clave = `${(r.patente || "").toUpperCase()}|${new Date(r.fecha_hora).toISOString()}`;
+    mapaExistentes.set(clave, r.id);
   }
-  return { creadas, actualizadas };
+
+  const aInsertarMapa = new Map();
+  const aActualizar = [];
+  for (const c of citas) {
+    const clave = `${(c.patente || "").toUpperCase()}|${new Date(c.fechaHora).toISOString()}`;
+    const idExistente = mapaExistentes.get(clave);
+    if (idExistente) aActualizar.push({ ...c, id: idExistente });
+    else aInsertarMapa.set(clave, c); // si el propio archivo repite la fila, se queda con la última
+  }
+  const aInsertar = [...aInsertarMapa.values()];
+
+  // 2) Inserciones nuevas en bloques grandes (una sola sentencia INSERT por bloque de hasta 200 filas,
+  // en vez de una sentencia por fila).
+  const TAMANO_BLOQUE = 200;
+  for (let i = 0; i < aInsertar.length; i += TAMANO_BLOQUE) {
+    const bloque = aInsertar.slice(i, i + TAMANO_BLOQUE);
+    const valores = [];
+    const params = [];
+    bloque.forEach((c, idx) => {
+      const base = idx * 10;
+      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10}, now())`);
+      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)");
+    });
+    await pool.query(
+      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at) VALUES ${valores.join(",")}`,
+      params
+    );
+  }
+
+  // 3) Actualizaciones en paralelo, con un límite de conexiones a la vez (en vez de una por una en fila).
+  const CONCURRENCIA = 8;
+  for (let i = 0; i < aActualizar.length; i += CONCURRENCIA) {
+    const bloque = aActualizar.slice(i, i + CONCURRENCIA);
+    await Promise.all(bloque.map(c =>
+      pool.query(
+        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6 WHERE id=$7`,
+        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.id]
+      )
+    ));
+  }
+
+  return { creadas: aInsertar.length, actualizadas: aActualizar.length };
 }
 
 app.get("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
