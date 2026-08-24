@@ -142,6 +142,25 @@ function render(){
     ? "Ya está en la última etapa"
     : `Avanzar a: ${stages[ot.etapa+1]} →`;
 
+  // Flujo simplificado para el mecánico: en vez de las flechas genéricas, dos botones claros
+  // juntos mientras la OT está en Reparación.
+  const nombreEtapa = stages[ot.etapa];
+  const esReparacion = nombreEtapa === "Reparación";
+  const trabajoBox = document.getElementById("trabajoBox");
+  const genericActions = document.getElementById("genericActions");
+  trabajoBox.style.display = esReparacion ? "flex" : "none";
+  genericActions.style.display = esReparacion ? "none" : "flex";
+  if(esReparacion){
+    const hint = document.getElementById("inicioTrabajoHint");
+    if(ot.trabajoIniciadoAt){
+      const hora = new Date(ot.trabajoIniciadoAt).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+      hint.textContent = "Iniciado a las " + hora;
+      hint.style.display = "block";
+    } else {
+      hint.style.display = "none";
+    }
+  }
+
   const pills = document.getElementById("stagePills");
   pills.innerHTML = stages.map((s,i)=>`
     <button class="stage-pill${i===ot.etapa? " active":""}" data-stage="${i}">${escapeHtml(s)}</button>
@@ -209,6 +228,31 @@ document.getElementById("advanceBtn").addEventListener("click", ()=>{
 });
 document.getElementById("backBtn").addEventListener("click", ()=>{
   if(ot.etapa > 0) updateStage(ot.etapa-1);
+});
+document.getElementById("inicioTrabajoBtn").addEventListener("click", async ()=>{
+  const msg = document.getElementById("msg");
+  const actor = document.getElementById("actorSelect").value;
+  if(!actor){
+    msg.textContent = "Selecciona tu nombre antes de continuar.";
+    msg.className = "msg error";
+    return;
+  }
+  try{
+    const res = await fetch(`/api/public/ot/${otId}/inicio-trabajo`, { method: "PUT" });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || "No se pudo guardar");
+    ot = data.ot;
+    render();
+    msg.textContent = "Inicio de trabajo registrado ✓";
+    msg.className = "msg ok";
+  }catch(e){
+    msg.textContent = e.message;
+    msg.className = "msg error";
+  }
+});
+document.getElementById("terminoTrabajoBtn").addEventListener("click", ()=>{
+  const idx = stages.indexOf("Control de calidad");
+  if(idx >= 0) updateStage(idx);
 });
 document.getElementById("addFotoBtn").addEventListener("click", ()=>document.getElementById("fotoInput").click());
 document.getElementById("fotoInput").addEventListener("change", (e)=>{

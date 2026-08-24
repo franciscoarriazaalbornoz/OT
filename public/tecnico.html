@@ -85,7 +85,13 @@
       <select id="actorSelect"><option value="">Selecciona tu nombre</option></select>
     </div>
 
-    <div class="big-actions">
+    <div class="big-actions" id="trabajoBox" style="display:none;">
+      <button class="big-btn primary" id="inicioTrabajoBtn">▶ Inicio de trabajo</button>
+      <div class="lavado-check-hint" id="inicioTrabajoHint" style="display:none;text-align:center;margin:-4px 0 4px;"></div>
+      <button class="big-btn primary" id="terminoTrabajoBtn">✓ Término de trabajo</button>
+    </div>
+
+    <div class="big-actions" id="genericActions">
       <button class="big-btn primary" id="advanceBtn">Avanzar a la siguiente etapa →</button>
       <button class="big-btn" id="backBtn">← Volver a la etapa anterior</button>
     </div>
