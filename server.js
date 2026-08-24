@@ -918,6 +918,17 @@ app.delete("/api/citas/:id", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Borrado masivo de citas — solo Administrador. Pensado para limpiar duplicados o partir de
+// cero antes de una reimportación limpia. Si se manda ?sucursal=X, borra solo esa sucursal;
+// si no, borra todas.
+app.delete("/api/citas", requireAuth, requireAdmin, async (req, res) => {
+  const { sucursal } = req.query;
+  const { rowCount } = sucursal
+    ? await pool.query("DELETE FROM citas WHERE sucursal=$1", [sucursal])
+    : await pool.query("DELETE FROM citas");
+  res.json({ ok: true, eliminadas: rowCount });
+});
+
 // --- Acceso por QR para técnicos (sin login, pensado para celular) ---
 app.get("/api/ots/:id/qr", requireAuth, async (req, res) => {
   const denied = await checkOtAccess(req, req.params.id);
