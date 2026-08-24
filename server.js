@@ -23,7 +23,7 @@ const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Contro
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
 const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
 // Solo estos roles pueden ver y gestionar Citas previas (Administrador siempre puede).
-const ROLES_CITAS = ["Asesor de servicio", "Jefe de taller"];
+const ROLES_CITAS = ["Recepción", "Jefe de taller"];
 const TIPOS_TRABAJO = [
   { value: "mantencion", label: "Mantención", color: "EB0A1E" },
   { value: "general", label: "Trabajo general", color: "E8B400" },
@@ -213,7 +213,7 @@ async function checkCitasAccess(req) {
   const acc = await currentUserAccess(req);
   if (!acc) return { status: 401, error: "No autenticado" };
   if (!acc.isAdmin && !ROLES_CITAS.includes(acc.rol)) {
-    return { status: 403, error: "Solo Asesor de servicio, Jefe de taller o Administrador pueden gestionar Citas." };
+    return { status: 403, error: "Solo Recepción, Jefe de taller o Administrador pueden gestionar Citas." };
   }
   return null;
 }
