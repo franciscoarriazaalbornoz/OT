@@ -22,6 +22,8 @@ const SUCURSALES = ["Summit Colón","Rancagua","Matta","Antofagasta","Calama"];
 const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador"];
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
 const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
+// Solo estos roles pueden ver y gestionar Citas previas (Administrador siempre puede).
+const ROLES_CITAS = ["Asesor de servicio", "Jefe de taller"];
 const TIPOS_TRABAJO = [
   { value: "mantencion", label: "Mantención", color: "EB0A1E" },
   { value: "general", label: "Trabajo general", color: "E8B400" },
@@ -203,6 +205,37 @@ async function checkOtAccess(req, otId) {
     return { status: 403, error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" };
   }
   return null;
+}
+
+// Verifica que el usuario tenga el rol habilitado para Citas (Asesor de servicio, Jefe de
+// taller o Administrador). Devuelve null si tiene acceso, o {status,error} si no.
+async function checkCitasAccess(req) {
+  const acc = await currentUserAccess(req);
+  if (!acc) return { status: 401, error: "No autenticado" };
+  if (!acc.isAdmin && !ROLES_CITAS.includes(acc.rol)) {
+    return { status: 403, error: "Solo Asesor de servicio, Jefe de taller o Administrador pueden gestionar Citas." };
+  }
+  return null;
+}
+
+// Ver el tablero de Citas es más permisivo que gestionarlas: todos pueden verlo,
+// salvo Mecánico y Lavado y entrega (su trabajo pasa por el QR del taller, no por Citas).
+const ROLES_CITAS_SIN_VER = ["Mecánico", "Lavado y entrega"];
+async function checkCitasVerAccess(req) {
+  const acc = await currentUserAccess(req);
+  if (!acc) return { status: 401, error: "No autenticado" };
+  if (!acc.isAdmin && ROLES_CITAS_SIN_VER.includes(acc.rol)) {
+    return { status: 403, error: "Tu rol no tiene acceso a Citas." };
+  }
+  return null;
+}
+
+// Si el usuario no es Administrador, deja solo las citas de SU propia sucursal — así, cuando
+// el Excel trae varias sucursales mezcladas, cada secretaria importa únicamente lo suyo.
+function filtrarCitasPorSucursal(citas, acc) {
+  if (acc.isAdmin) return { citas, omitidasPorSucursal: 0 };
+  const propias = citas.filter(c => (c.sucursal || "").trim().toLowerCase() === (acc.sucursal || "").trim().toLowerCase());
+  return { citas: propias, omitidasPorSucursal: citas.length - propias.length };
 }
 
 // --- Autenticación ---
@@ -525,11 +558,7 @@ function toDirectDownloadUrl(url) {
   return url;
 }
 
-async function descargarYParsearExcel(url) {
-  const directUrl = toDirectDownloadUrl(url);
-  const res = await fetch(directUrl, { redirect: "follow" });
-  if (!res.ok) throw new Error(`No se pudo descargar el archivo (HTTP ${res.status}). Verifica que el link sea público ("cualquiera con el link puede ver").`);
-  const buffer = Buffer.from(await res.arrayBuffer());
+function parsearExcelBuffer(buffer) {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
@@ -574,38 +603,19 @@ async function descargarYParsearExcel(url) {
   return { citas, errores, columnasDetectadas: Object.keys(colMap) };
 }
 
-app.get("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
-  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='citas_excel_url'");
-  res.json({ url: rows[0] ? rows[0].value : "" });
-});
+async function descargarYParsearExcel(url) {
+  const directUrl = toDirectDownloadUrl(url);
+  const res = await fetch(directUrl, { redirect: "follow" });
+  if (!res.ok) throw new Error(`No se pudo descargar el archivo (HTTP ${res.status}). Verifica que el link sea público ("cualquiera con el link puede ver").`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return parsearExcelBuffer(buffer);
+}
 
-app.put("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
-  const { url } = req.body || {};
-  await pool.query(
-    `INSERT INTO app_settings (key, value) VALUES ('citas_excel_url', $1)
-     ON CONFLICT (key) DO UPDATE SET value=$1`,
-    [url || ""]
-  );
-  res.json({ ok: true });
-});
-
-app.post("/api/citas/sincronizar", requireAuth, async (req, res) => {
-  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='citas_excel_url'");
-  const url = rows[0] ? rows[0].value : "";
-  if (!url) return res.status(400).json({ error: "No hay un link de Excel configurado. Pídele a un administrador que lo configure." });
-
-  let parsed;
-  try {
-    parsed = await descargarYParsearExcel(url);
-  } catch (e) {
-    return res.status(400).json({ error: e.message });
-  }
-
-  const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
-  const actor = urows[0] ? urows[0].nombre : "";
-
+// Aplica una lista de citas ya parseadas: crea las nuevas, actualiza las que ya existían
+// (mismo criterio que la sincronización por link: patente + fecha/hora exacta).
+async function upsertCitasParseadas(citas, actor) {
   let creadas = 0, actualizadas = 0;
-  for (const c of parsed.citas) {
+  for (const c of citas) {
     const { rows: existentes } = await pool.query(
       "SELECT id FROM citas WHERE fecha_hora=$1 AND UPPER(patente)=UPPER($2)",
       [c.fechaHora, c.patente || ""]
@@ -625,13 +635,75 @@ app.post("/api/citas/sincronizar", requireAuth, async (req, res) => {
       creadas++;
     }
   }
+  return { creadas, actualizadas };
+}
 
-  res.json({ creadas, actualizadas, totalFilas: parsed.citas.length, errores: parsed.errores, columnasDetectadas: parsed.columnasDetectadas });
+app.get("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='citas_excel_url'");
+  res.json({ url: rows[0] ? rows[0].value : "" });
+});
+
+app.put("/api/settings/citas-excel-url", requireAuth, requireAdmin, async (req, res) => {
+  const { url } = req.body || {};
+  await pool.query(
+    `INSERT INTO app_settings (key, value) VALUES ('citas_excel_url', $1)
+     ON CONFLICT (key) DO UPDATE SET value=$1`,
+    [url || ""]
+  );
+  res.json({ ok: true });
+});
+
+app.post("/api/citas/sincronizar", requireAuth, async (req, res) => {
+  const denied = await checkCitasAccess(req);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
+  const acc = await currentUserAccess(req);
+  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='citas_excel_url'");
+  const url = rows[0] ? rows[0].value : "";
+  if (!url) return res.status(400).json({ error: "No hay un link de Excel configurado. Pídele a un administrador que lo configure." });
+
+  let parsed;
+  try {
+    parsed = await descargarYParsearExcel(url);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+
+  const { citas: citasFiltradas, omitidasPorSucursal } = filtrarCitasPorSucursal(parsed.citas, acc);
+  const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+  const actor = urows[0] ? urows[0].nombre : "";
+  const { creadas, actualizadas } = await upsertCitasParseadas(citasFiltradas, actor);
+
+  res.json({ creadas, actualizadas, omitidasPorSucursal, totalFilas: parsed.citas.length, errores: parsed.errores, columnasDetectadas: parsed.columnasDetectadas });
+});
+
+app.post("/api/citas/importar-excel", requireAuth, async (req, res) => {
+  const denied = await checkCitasAccess(req);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
+  const acc = await currentUserAccess(req);
+  const { fileBase64 } = req.body || {};
+  if (!fileBase64) return res.status(400).json({ error: "Falta el archivo" });
+
+  let parsed;
+  try {
+    const base64Clean = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
+    const buffer = Buffer.from(base64Clean, "base64");
+    parsed = parsearExcelBuffer(buffer);
+  } catch (e) {
+    return res.status(400).json({ error: "No se pudo leer el archivo. ¿Es un Excel o CSV válido?" });
+  }
+
+  const { citas: citasFiltradas, omitidasPorSucursal } = filtrarCitasPorSucursal(parsed.citas, acc);
+  const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+  const actor = urows[0] ? urows[0].nombre : "";
+  const { creadas, actualizadas } = await upsertCitasParseadas(citasFiltradas, actor);
+
+  res.json({ creadas, actualizadas, omitidasPorSucursal, totalFilas: parsed.citas.length, errores: parsed.errores, columnasDetectadas: parsed.columnasDetectadas });
 });
 
 app.get("/api/citas", requireAuth, async (req, res) => {
+  const denied = await checkCitasVerAccess(req);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const acc = await currentUserAccess(req);
-  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { desde, hasta } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
   const { rows } = acc.isAdmin
@@ -641,8 +713,9 @@ app.get("/api/citas", requireAuth, async (req, res) => {
 });
 
 app.post("/api/citas", requireAuth, async (req, res) => {
+  const denied = await checkCitasAccess(req);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const acc = await currentUserAccess(req);
-  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const b = req.body || {};
   if (!b.fechaHora) return res.status(400).json({ error: "Falta la fecha y hora de la cita" });
   const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
@@ -660,8 +733,9 @@ app.post("/api/citas", requireAuth, async (req, res) => {
 });
 
 app.put("/api/citas/:id", requireAuth, async (req, res) => {
+  const denied = await checkCitasAccess(req);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const acc = await currentUserAccess(req);
-  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows: existingRows } = await pool.query("SELECT * FROM citas WHERE id=$1", [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: "Cita no encontrada" });
   const existing = rowToCita(existingRows[0]);
@@ -683,8 +757,9 @@ app.put("/api/citas/:id", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/citas/:id", requireAuth, async (req, res) => {
+  const denied = await checkCitasAccess(req);
+  if (denied) return res.status(denied.status).json({ error: denied.error });
   const acc = await currentUserAccess(req);
-  if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows: existingRows } = await pool.query("SELECT sucursal FROM citas WHERE id=$1", [req.params.id]);
   if (existingRows[0] && !acc.isAdmin && existingRows[0].sucursal !== acc.sucursal) {
     return res.status(403).json({ error: "Esta cita pertenece a otra sucursal — no tienes acceso a ella" });
