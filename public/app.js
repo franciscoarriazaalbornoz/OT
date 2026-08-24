@@ -98,6 +98,7 @@ function enterApp(){
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("citasBtn").style.display = ["Mecánico","Lavado y entrega"].includes(currentUser.rol) ? "none" : "inline-block";
   // La sucursal del usuario es mandante: si no es Administrador, no tiene sentido ofrecerle
   // un filtro de "otras sucursales" — el servidor de todas formas solo le va a devolver la suya.
   document.getElementById("filterSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
@@ -540,10 +541,18 @@ function weekRange(d){
 }
 function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
 
+function puedeGestionarCitas(){
+  return currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller"].includes(currentUser.rol);
+}
+
 function openCitas(){
   document.getElementById("appScreen").style.display = "none";
   document.getElementById("citasScreen").style.display = "block";
   document.getElementById("citasUserInfo").textContent = document.getElementById("userInfo").textContent;
+  const gestiona = puedeGestionarCitas();
+  document.getElementById("citasNewBtn").style.display = gestiona ? "inline-block" : "none";
+  document.getElementById("citasSyncBtn").style.display = gestiona ? "inline-block" : "none";
+  document.getElementById("citasImportarArchivoBtn").style.display = gestiona ? "inline-block" : "none";
   loadCitas();
 }
 function closeCitas(){
@@ -677,6 +686,16 @@ function openEditCita(id){
   document.getElementById("c_estado").value = c.estado||"pendiente";
   document.getElementById("c_notas").value = c.notas||"";
   document.getElementById("citaConvertirBtn").style.display = c.estado==="convertida" ? "none" : "inline-block";
+
+  const gestiona = puedeGestionarCitas();
+  document.getElementById("citaModalTitle").textContent = gestiona ? "Editar cita" : "Detalle de la cita (solo lectura)";
+  ["c_fecha","c_hora","c_patente","c_cliente","c_telefono","c_modelo","c_sucursal","c_tipo","c_estado","c_notas"].forEach(id=>{
+    document.getElementById(id).disabled = !gestiona || document.getElementById(id).disabled;
+  });
+  document.getElementById("citaDeleteBtn").style.display = gestiona ? "block" : "none";
+  document.getElementById("citaSaveBtn").style.display = gestiona ? "inline-block" : "none";
+  if(!gestiona) document.getElementById("citaConvertirBtn").style.display = "none";
+
   document.getElementById("citaOverlay").classList.add("show");
 }
 
@@ -869,6 +888,27 @@ async function sincronizarExcel(){
     const data = await api("/api/citas/sincronizar", { method:"POST" });
     msg.className = "sync-msg ok";
     let texto = `Listo — ${data.creadas} cita(s) nueva(s), ${data.actualizadas} actualizada(s) de ${data.totalFilas} filas leídas.`;
+    if(data.omitidasPorSucursal) texto += ` ${data.omitidasPorSucursal} fila(s) de otras sucursales se ignoraron.`;
+    if(data.errores && data.errores.length) texto += ` (${data.errores.length} fila(s) con problemas — revisa el formato)`;
+    msg.textContent = texto;
+    loadCitas();
+  }catch(e){
+    msg.className = "sync-msg error";
+    msg.textContent = e.message;
+  }
+}
+
+async function importarCitasArchivo(file){
+  const msg = document.getElementById("citasSyncMsg");
+  msg.style.display = "block";
+  msg.className = "sync-msg";
+  msg.textContent = "Importando...";
+  try{
+    const fileBase64 = await leerArchivoComoBase64(file);
+    const data = await api("/api/citas/importar-excel", { method:"POST", body:{ fileBase64 } });
+    msg.className = "sync-msg ok";
+    let texto = `Listo — ${data.creadas} cita(s) nueva(s), ${data.actualizadas} actualizada(s) de ${data.totalFilas} filas leídas.`;
+    if(data.omitidasPorSucursal) texto += ` ${data.omitidasPorSucursal} fila(s) de otras sucursales se ignoraron.`;
     if(data.errores && data.errores.length) texto += ` (${data.errores.length} fila(s) con problemas — revisa el formato)`;
     msg.textContent = texto;
     loadCitas();
@@ -934,6 +974,12 @@ document.getElementById("historialCloseBtn").addEventListener("click", ()=>docum
 document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e.target.id==="historialOverlay") document.getElementById("historialOverlay").classList.remove("show"); });
 
 document.getElementById("citasSyncBtn").addEventListener("click", sincronizarExcel);
+document.getElementById("citasImportarArchivoBtn").addEventListener("click", ()=>document.getElementById("citasImportarArchivoInput").click());
+document.getElementById("citasImportarArchivoInput").addEventListener("change", (e)=>{
+  const file = e.target.files[0];
+  if(file) importarCitasArchivo(file);
+  e.target.value = "";
+});
 document.getElementById("citasConfigExcelBtn").addEventListener("click", abrirConfigExcel);
 document.getElementById("excelConfigCancelBtn").addEventListener("click", cerrarConfigExcel);
 document.getElementById("excelConfigSaveBtn").addEventListener("click", guardarConfigExcel);
