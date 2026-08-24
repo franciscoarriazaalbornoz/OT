@@ -749,7 +749,7 @@ function convertirCitaEnOT(){
   closeCitaModal();
   closeCitas();
   openNew();
-  document.getElementById("f_patente").value = c.patente||"";
+  document.getElementById("f_patente").value = (c.patente||"").replace(/-/g, "").toUpperCase();
   document.getElementById("f_cliente").value = c.cliente||"";
   document.getElementById("f_modelo").value = c.modelo||"";
   document.getElementById("f_sucursal").value = c.sucursal||SUCURSALES[0];
