@@ -547,6 +547,7 @@ function weekRange(d){
   return [monday, end];
 }
 function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
+const MINUTOS_ATRASO = 30;
 
 function puedeGestionarCitas(){
   return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller","Asesor de servicio","Control de calidad"].includes(currentUser.rol);
@@ -604,17 +605,22 @@ function renderCitasDia(){
   const list = citasFiltradas().sort((a,b)=> new Date(a.fechaHora)-new Date(b.fechaHora));
   const el = document.getElementById("citasDiaView");
   if(list.length===0){ el.innerHTML = `<div class="citas-empty">No hay citas agendadas para este día.</div>`; return; }
+  const ahora = new Date();
   el.innerHTML = list.map(c=>{
     const tipo = tipoInfo(c.tipo);
     const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
-    const bgEspera = c.clienteEspera ? "background:#FFF4CC;" : "";
+    // Una cita atrasada (pasó la hora y sigue "pendiente") es más urgente que "cliente espera" —
+    // si se dan ambas a la vez, manda el aviso de atrasada.
+    const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
+    const claseEstado = atrasada ? " atrasada" : (c.clienteEspera ? " espera" : "");
     return `
-      <div class="cita-card" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"};${bgEspera}">
+      <div class="cita-card${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
         <div class="cita-hora">${hora}</div>
         <div class="cita-info">
           <div class="cita-cliente">${escapeHtml(c.cliente||"Sin nombre")} ${c.patente?"· "+escapeHtml(c.patente):""}</div>
           <div class="cita-detalle">${escapeHtml(c.modelo||"")} ${c.sucursal?"· "+escapeHtml(c.sucursal):""} ${tipo?"· "+escapeHtml(tipo.label):""}</div>
           ${c.pruebaRuta ? `<span class="cita-chip-ruta">Prueba de ruta</span>` : ""}
+          ${atrasada ? `<span class="cita-chip-atrasada">⚠ No ha ingresado</span>` : ""}
         </div>
         <span class="cita-estado ${c.estado}">${estadoLabel(c.estado)}</span>
       </div>`;
@@ -630,6 +636,7 @@ function renderCitasSemana(){
   for(let i=0;i<7;i++){ const d = new Date(monday); d.setDate(d.getDate()+i); dias.push(d); }
   const list = citasFiltradas();
   const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const ahora = new Date();
   const el = document.getElementById("citasSemanaView");
   el.innerHTML = dias.map(d=>{
     const esHoy = d.getTime()===hoy.getTime();
@@ -641,7 +648,9 @@ function renderCitasSemana(){
         ${citasDia.length===0 ? `<div class="citas-empty" style="padding:10px 0;font-size:11px;">Sin citas</div>` : citasDia.map(c=>{
           const tipo = tipoInfo(c.tipo);
           const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
-          return `<div class="cita-mini" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"};${c.clienteEspera?"background:#FFF4CC;":""}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
+          const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
+          const claseEstado = atrasada ? " atrasada" : (c.clienteEspera ? " espera" : "");
+          return `<div class="cita-mini${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
         }).join("")}
       </div>`;
   }).join("");

@@ -76,6 +76,16 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .cita-estado.convertida{background:#E4F1EA;color:#0F5A38;}
 .cita-estado.no_show{background:#FBE6E6;color:#8C1D1D;}
 .cita-chip-ruta{display:inline-block;margin-top:3px;font-size:9.5px;font-weight:700;color:#0A4A7A;background:#DCEBFA;border-radius:5px;padding:2px 7px;}
+.cita-chip-atrasada{display:inline-block;margin-top:3px;margin-left:5px;font-size:9.5px;font-weight:700;color:#fff;background:#8C0A24;border-radius:5px;padding:2px 7px;}
+.cita-card.espera{background:#FFF4CC;}
+.cita-card.atrasada{background:#D70C3E;}
+.cita-card.atrasada .cita-hora,
+.cita-card.atrasada .cita-cliente,
+.cita-card.atrasada .cita-detalle{color:#fff;}
+.cita-card.atrasada .cita-estado.pendiente{background:#fff;color:#8C1D1D;}
+.cita-mini.espera{background:#FFF4CC;}
+.cita-mini.atrasada{background:#D70C3E;color:#fff;font-weight:700;}
+.cita-mini.atrasada .h{color:#fff;}
 .citas-empty{text-align:center;color:var(--text-3);font-size:13px;padding:40px 0;}
 
 .citas-semana{display:flex;gap:10px;padding:6px 24px 30px;overflow-x:auto;}
