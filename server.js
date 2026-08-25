@@ -23,7 +23,7 @@ const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Contro
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
 const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
 // Solo estos roles pueden ver y gestionar Citas previas (Administrador siempre puede).
-const ROLES_CITAS = ["Recepción", "Jefe de taller"];
+const ROLES_CITAS = ["Recepción", "Jefe de taller", "Asesor de servicio", "Control de calidad"];
 const TIPOS_TRABAJO = [
   { value: "mantencion", label: "Mantención", color: "EB0A1E" },
   { value: "general", label: "Trabajo general", color: "E8B400" },
@@ -51,6 +51,7 @@ function rowToOt(r) {
     checkPptoRealizado: r.check_ppto_realizado === true,
     checkPptoAutorizado: r.check_ppto_autorizado === true,
     trabajoIniciadoAt: r.trabajo_iniciado_at ? new Date(r.trabajo_iniciado_at).toISOString() : null,
+    tecnicoTrabajo: r.tecnico_trabajo || "",
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
   };
@@ -107,6 +108,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_realizado BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_autorizado BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS trabajo_iniciado_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tecnico_trabajo TEXT;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -141,6 +143,8 @@ async function initDb() {
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS cliente_espera BOOLEAN DEFAULT false;`);
+  await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS prueba_ruta BOOLEAN DEFAULT false;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ot_fotos (
       id TEXT PRIMARY KEY,
@@ -213,7 +217,7 @@ async function checkCitasAccess(req) {
   const acc = await currentUserAccess(req);
   if (!acc) return { status: 401, error: "No autenticado" };
   if (!acc.isAdmin && !ROLES_CITAS.includes(acc.rol)) {
-    return { status: 403, error: "Solo Recepción, Jefe de taller o Administrador pueden gestionar Citas." };
+    return { status: 403, error: "Solo Recepción, Asesor de servicio, Control de calidad, Jefe de taller o Administrador pueden gestionar Citas." };
   }
   return null;
 }
@@ -487,6 +491,7 @@ function rowToCita(r) {
     id: r.id, patente: r.patente || "", cliente: r.cliente || "", telefono: r.telefono || "",
     modelo: r.modelo || "", fechaHora: r.fecha_hora ? new Date(r.fecha_hora).toISOString() : "",
     sucursal: r.sucursal || "", tipo: r.tipo || "general", estado: r.estado || "pendiente",
+    clienteEspera: r.cliente_espera === true, pruebaRuta: r.prueba_ruta === true,
     notas: r.notas || "", creadoPor: r.creado_por || "", otId: r.ot_id || null
   };
 }
@@ -509,8 +514,17 @@ const HEADER_ALIASES = {
   marca: ["marca"],
   sucursal: ["sucursal"],
   tipo: ["tipo", "tipo de trabajo", "tipotrabajo", "descripcion", "descripcion trabajo"],
-  notas: ["notas", "observaciones", "comentarios"]
+  notas: ["notas", "observaciones", "comentarios"],
+  esperaCliente: ["lo espera", "espera", "cliente espera", "cliente lo espera"],
+  fir: ["fir"],
+  pruebaRuta: ["ruta", "prueba de ruta", "prueba ruta"]
 };
+
+// Interpreta valores tipo "SI"/"NO" (o variantes) de columnas booleanas del Excel.
+function esSi(v) {
+  const norm = normalizarHeader(v);
+  return norm === "si" || norm === "x" || norm === "1" || norm === "true" || norm === "yes";
+}
 
 // Traduce texto libre de la columna "Descripción" (o similar) al tipo de trabajo interno.
 // Ej: "TRABAJO GENERAL" -> general, "MANTENCION" -> mantencion, "PRIMER SERVICIO" -> garantia.
@@ -696,9 +710,12 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
 
     const sucursalFinal = sucursalFija || (colMap.sucursal !== undefined ? String(get("sucursal") || "").trim() : "");
     const tipoTexto = get("tipo");
-    const tipoFinal = colMap.tipo !== undefined
+    let tipoFinal = colMap.tipo !== undefined
       ? (TIPOS_TRABAJO.some(t => t.value === normalizarHeader(tipoTexto)) ? normalizarHeader(tipoTexto) : mapearTipoDesdeTexto(tipoTexto))
       : "general";
+    // La columna FIR manda: si viene marcada "SI", el tipo de trabajo queda en FIR sin importar
+    // lo que diga la Descripción — así, al convertir la cita en OT, ya sale con el borde negro.
+    if (colMap.fir !== undefined && esSi(get("fir"))) tipoFinal = "fir";
 
     citas.push({
       fechaHora: fechaHoraISO,
@@ -708,6 +725,8 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
       modelo: modeloFinal,
       sucursal: sucursalFinal,
       tipo: tipoFinal,
+      clienteEspera: colMap.esperaCliente !== undefined && esSi(get("esperaCliente")),
+      pruebaRuta: colMap.pruebaRuta !== undefined && esSi(get("pruebaRuta")),
       notas: colMap.notas !== undefined ? String(get("notas") || "").trim() : ""
     });
   }
@@ -796,12 +815,12 @@ async function upsertCitasParseadas(citas, actor) {
     const valores = [];
     const params = [];
     bloque.forEach((c, idx) => {
-      const base = idx * 10;
-      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10}, now())`);
-      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)");
+      const base = idx * 12;
+      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10},$${base+11},$${base+12}, now())`);
+      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)", c.clienteEspera === true, c.pruebaRuta === true);
     });
     await pool.query(
-      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at) VALUES ${valores.join(",")}`,
+      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, created_at) VALUES ${valores.join(",")}`,
       params
     );
   }
@@ -812,8 +831,8 @@ async function upsertCitasParseadas(citas, actor) {
     const bloque = aActualizar.slice(i, i + CONCURRENCIA);
     await Promise.all(bloque.map(c =>
       pool.query(
-        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6 WHERE id=$7`,
-        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.id]
+        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6, cliente_espera=$7, prueba_ruta=$8 WHERE id=$9`,
+        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.clienteEspera === true, c.pruebaRuta === true, c.id]
       )
     ));
   }
@@ -905,11 +924,11 @@ app.post("/api/citas", requireAuth, async (req, res) => {
   const id = uid("cita");
   const sucursalFinal = acc.isAdmin ? (b.sucursal || SUCURSALES[0]) : acc.sucursal;
   await pool.query(
-    `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10, now())`,
+    `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10,$11,$12, now())`,
     [id, b.patente || "", b.cliente || "", b.telefono || "", b.modelo || "", b.fechaHora,
      sucursalFinal, TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
-     b.notas || "", urows[0] ? urows[0].nombre : ""]
+     b.notas || "", urows[0] ? urows[0].nombre : "", b.clienteEspera === true, b.pruebaRuta === true]
   );
   const { rows } = await pool.query("SELECT * FROM citas WHERE id=$1", [id]);
   res.json({ cita: rowToCita(rows[0]) });
@@ -929,11 +948,11 @@ app.put("/api/citas/:id", requireAuth, async (req, res) => {
   const merged = { ...existing, ...b };
   if (!acc.isAdmin) merged.sucursal = acc.sucursal;
   await pool.query(
-    `UPDATE citas SET patente=$1, cliente=$2, telefono=$3, modelo=$4, fecha_hora=$5, sucursal=$6, tipo=$7, estado=$8, notas=$9, ot_id=$10 WHERE id=$11`,
+    `UPDATE citas SET patente=$1, cliente=$2, telefono=$3, modelo=$4, fecha_hora=$5, sucursal=$6, tipo=$7, estado=$8, notas=$9, ot_id=$10, cliente_espera=$11, prueba_ruta=$12 WHERE id=$13`,
     [merged.patente, merged.cliente, merged.telefono, merged.modelo, merged.fechaHora, merged.sucursal,
      TIPOS_TRABAJO.some(t=>t.value===merged.tipo) ? merged.tipo : "general",
      ["pendiente","convertida","no_show"].includes(merged.estado) ? merged.estado : "pendiente",
-     merged.notas, merged.otId || null, req.params.id]
+     merged.notas, merged.otId || null, merged.clienteEspera === true, merged.pruebaRuta === true, req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM citas WHERE id=$1", [req.params.id]);
   res.json({ cita: rowToCita(rows[0]) });
@@ -1046,7 +1065,8 @@ app.put("/api/public/ot/:id/check-lavado", async (req, res) => {
 app.put("/api/public/ot/:id/inicio-trabajo", async (req, res) => {
   const { rows } = await pool.query("SELECT id FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
-  await pool.query("UPDATE ots SET trabajo_iniciado_at=now() WHERE id=$1", [req.params.id]);
+  const { actorNombre } = req.body || {};
+  await pool.query("UPDATE ots SET trabajo_iniciado_at=now(), tecnico_trabajo=$1 WHERE id=$2", [actorNombre || "", req.params.id]);
   const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updated[0]) });
 });
