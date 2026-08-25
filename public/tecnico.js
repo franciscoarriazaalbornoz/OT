@@ -238,7 +238,11 @@ document.getElementById("inicioTrabajoBtn").addEventListener("click", async ()=>
     return;
   }
   try{
-    const res = await fetch(`/api/public/ot/${otId}/inicio-trabajo`, { method: "PUT" });
+    const res = await fetch(`/api/public/ot/${otId}/inicio-trabajo`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorNombre: actor })
+    });
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || "No se pudo guardar");
     ot = data.ot;

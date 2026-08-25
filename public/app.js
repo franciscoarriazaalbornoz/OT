@@ -301,6 +301,7 @@ function openNew(){
   const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Repuestos"].includes(currentUser.rol);
   document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
   document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
+  document.getElementById("tecnicoTrabajoBox").style.display = "none";
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
@@ -341,6 +342,12 @@ function openEdit(id){
     const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Repuestos"].includes(currentUser.rol);
     document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
     document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
+  }
+  if(o.tecnicoTrabajo){
+    document.getElementById("tecnicoTrabajoBox").style.display = "block";
+    document.getElementById("tecnicoTrabajoNombre").textContent = o.tecnicoTrabajo;
+  } else {
+    document.getElementById("tecnicoTrabajoBox").style.display = "none";
   }
   document.getElementById("fotosSection").style.display = "block";
   document.getElementById("fotosGrid").innerHTML = "";
@@ -542,7 +549,7 @@ function weekRange(d){
 function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
 
 function puedeGestionarCitas(){
-  return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller"].includes(currentUser.rol);
+  return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller","Asesor de servicio","Control de calidad"].includes(currentUser.rol);
 }
 
 function openCitas(){
@@ -600,12 +607,14 @@ function renderCitasDia(){
   el.innerHTML = list.map(c=>{
     const tipo = tipoInfo(c.tipo);
     const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+    const bgEspera = c.clienteEspera ? "background:#FFF4CC;" : "";
     return `
-      <div class="cita-card" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
+      <div class="cita-card" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"};${bgEspera}">
         <div class="cita-hora">${hora}</div>
         <div class="cita-info">
           <div class="cita-cliente">${escapeHtml(c.cliente||"Sin nombre")} ${c.patente?"· "+escapeHtml(c.patente):""}</div>
           <div class="cita-detalle">${escapeHtml(c.modelo||"")} ${c.sucursal?"· "+escapeHtml(c.sucursal):""} ${tipo?"· "+escapeHtml(tipo.label):""}</div>
+          ${c.pruebaRuta ? `<span class="cita-chip-ruta">Prueba de ruta</span>` : ""}
         </div>
         <span class="cita-estado ${c.estado}">${estadoLabel(c.estado)}</span>
       </div>`;
@@ -632,7 +641,7 @@ function renderCitasSemana(){
         ${citasDia.length===0 ? `<div class="citas-empty" style="padding:10px 0;font-size:11px;">Sin citas</div>` : citasDia.map(c=>{
           const tipo = tipoInfo(c.tipo);
           const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
-          return `<div class="cita-mini" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
+          return `<div class="cita-mini" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"};${c.clienteEspera?"background:#FFF4CC;":""}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
         }).join("")}
       </div>`;
   }).join("");
@@ -663,6 +672,8 @@ function openNewCita(){
   document.getElementById("c_sucursal").value = currentUser.sucursal || SUCURSALES[0];
   document.getElementById("c_sucursal").disabled = currentUser.rol !== "Administrador";
   document.getElementById("c_tipo").value = "general";
+  document.getElementById("c_cliente_espera").checked = false;
+  document.getElementById("c_prueba_ruta").checked = false;
   document.getElementById("citaOverlay").classList.add("show");
 }
 
@@ -686,11 +697,13 @@ function openEditCita(id){
   document.getElementById("c_tipo").value = c.tipo||"general";
   document.getElementById("c_estado").value = c.estado||"pendiente";
   document.getElementById("c_notas").value = c.notas||"";
+  document.getElementById("c_cliente_espera").checked = !!c.clienteEspera;
+  document.getElementById("c_prueba_ruta").checked = !!c.pruebaRuta;
   document.getElementById("citaConvertirBtn").style.display = c.estado==="convertida" ? "none" : "inline-block";
 
   const gestiona = puedeGestionarCitas();
   document.getElementById("citaModalTitle").textContent = gestiona ? "Editar cita" : "Detalle de la cita (solo lectura)";
-  ["c_fecha","c_hora","c_patente","c_cliente","c_telefono","c_modelo","c_sucursal","c_tipo","c_estado","c_notas"].forEach(id=>{
+  ["c_fecha","c_hora","c_patente","c_cliente","c_telefono","c_modelo","c_sucursal","c_tipo","c_estado","c_notas","c_cliente_espera","c_prueba_ruta"].forEach(id=>{
     document.getElementById(id).disabled = !gestiona || document.getElementById(id).disabled;
   });
   document.getElementById("citaDeleteBtn").style.display = gestiona ? "block" : "none";
@@ -716,7 +729,9 @@ async function saveCita(){
     modelo: document.getElementById("c_modelo").value.trim(),
     sucursal: document.getElementById("c_sucursal").value,
     tipo: document.getElementById("c_tipo").value,
-    notas: document.getElementById("c_notas").value.trim()
+    notas: document.getElementById("c_notas").value.trim(),
+    clienteEspera: document.getElementById("c_cliente_espera").checked,
+    pruebaRuta: document.getElementById("c_prueba_ruta").checked
   };
   if(editingCitaId) payload.estado = document.getElementById("c_estado").value;
   try{
@@ -755,7 +770,9 @@ function convertirCitaEnOT(){
   document.getElementById("f_modelo").value = c.modelo||"";
   document.getElementById("f_sucursal").value = c.sucursal||SUCURSALES[0];
   document.getElementById("f_tipo").value = c.tipo||"general";
-  document.getElementById("f_notas").value = "Agendado el " + new Date(c.fechaHora).toLocaleString("es-CL") + (c.notas ? " — " + c.notas : "");
+  let notaFinal = "Agendado el " + new Date(c.fechaHora).toLocaleString("es-CL") + (c.notas ? " — " + c.notas : "");
+  if(c.pruebaRuta) notaFinal += " — REQUIERE PRUEBA DE RUTA";
+  document.getElementById("f_notas").value = notaFinal;
 }
 
 // --- Reportes (solo Administrador) ---

@@ -75,6 +75,7 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .cita-estado.pendiente{background:#FEF3D6;color:#7A4E06;}
 .cita-estado.convertida{background:#E4F1EA;color:#0F5A38;}
 .cita-estado.no_show{background:#FBE6E6;color:#8C1D1D;}
+.cita-chip-ruta{display:inline-block;margin-top:3px;font-size:9.5px;font-weight:700;color:#0A4A7A;background:#DCEBFA;border-radius:5px;padding:2px 7px;}
 .citas-empty{text-align:center;color:var(--text-3);font-size:13px;padding:40px 0;}
 
 .citas-semana{display:flex;gap:10px;padding:6px 24px 30px;overflow-x:auto;}
@@ -116,6 +117,7 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .card-ppto-ok.pendiente{color:#5B5B58;background:#EFEDE7;}
 .card-ppto-ok.autorizado{color:#0F5A38;background:#E4F1EA;}
 .input-upper{text-transform:uppercase;}
+.tecnico-trabajo-readonly{font-size:14px;font-weight:600;color:var(--text);background:#F0EFEA;border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-top:4px;}
 .card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
 .card-suc{font-size:10px;color:var(--text-2);background:#F0EFEA;border-radius:5px;padding:2px 6px;}
 .card-move{display:flex;gap:4px;}

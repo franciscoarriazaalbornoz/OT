@@ -193,6 +193,10 @@
         <option value="convertida">Convertida en OT</option>
       </select>
     </div>
+    <div class="grid2">
+      <div class="field"><label class="checkbox-label"><input type="checkbox" id="c_cliente_espera"> Cliente lo espera</label></div>
+      <div class="field"><label class="checkbox-label"><input type="checkbox" id="c_prueba_ruta"> Requiere prueba de ruta</label></div>
+    </div>
     <div class="field"><label>Notas</label><textarea id="c_notas" rows="2" placeholder="Observaciones..."></textarea></div>
     <div class="modal-actions">
       <button class="danger-link" id="citaDeleteBtn" style="display:none;">Eliminar cita</button>
@@ -229,6 +233,11 @@
     </div>
     <div class="field"><label>Fecha y hora de entrega (estimada)</label><input id="f_fecha_entrega" type="datetime-local"></div>
     <div class="field"><label>Notas</label><textarea id="f_notas" rows="3" placeholder="Observaciones..." class="input-upper"></textarea></div>
+    <div class="field check-lavado-field" id="tecnicoTrabajoBox" style="display:none;">
+      <label>Técnico que inició el trabajo</label>
+      <div class="tecnico-trabajo-readonly" id="tecnicoTrabajoNombre">—</div>
+      <span class="field-hint">Uso interno — se completa solo cuando el técnico marca "Inicio de trabajo" desde su celular. Nunca se muestra al cliente ni en la tarjeta del tablero.</span>
+    </div>
     <div class="field check-lavado-field">
       <label class="checkbox-label"><input type="checkbox" id="f_check_ppto_realizado"> Presupuesto realizado</label>
       <span class="field-hint">Uso interno — solo Asesor de servicio, Jefe de taller y Repuestos pueden marcarlo. Nunca se muestra al cliente.</span>
