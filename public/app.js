@@ -258,6 +258,7 @@ function render(){
           ${o.prioridad==="alta" ? `<span class="chip-alta">Alta</span>` : ""}
           ${o.checkLavado ? `<span class="card-lavado-ok">✓ Lavado OK</span>` : ""}
           ${o.checkPptoAutorizado ? `<span class="card-ppto-ok autorizado">Ppto: OK</span>` : (o.checkPptoRealizado ? `<span class="card-ppto-ok pendiente">Ppto: OK</span>` : "")}
+          ${o.tieneFotos ? `<span class="card-fotos-chip" title="Tiene fotos adjuntas">📎</span>` : ""}
         </div>
         <div class="card-foot">
           <span class="card-suc">${escapeHtml(o.sucursal||"—")}</span>
