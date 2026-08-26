@@ -86,6 +86,8 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .cita-mini.espera{background:#FFF4CC;}
 .cita-mini.atrasada{background:#D70C3E;color:#fff;font-weight:700;}
 .cita-mini.atrasada .h{color:#fff;}
+.cita-card.convertida{background:#E4F1EA;}
+.cita-mini.convertida{background:#E4F1EA;}
 .citas-empty{text-align:center;color:var(--text-3);font-size:13px;padding:40px 0;}
 
 .citas-semana{display:flex;gap:10px;padding:6px 24px 30px;overflow-x:auto;}

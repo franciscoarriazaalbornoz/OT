@@ -612,7 +612,7 @@ function renderCitasDia(){
     // Una cita atrasada (pasó la hora y sigue "pendiente") es más urgente que "cliente espera" —
     // si se dan ambas a la vez, manda el aviso de atrasada.
     const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
-    const claseEstado = atrasada ? " atrasada" : (c.clienteEspera ? " espera" : "");
+    const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : ""));
     return `
       <div class="cita-card${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
         <div class="cita-hora">${hora}</div>
@@ -649,7 +649,7 @@ function renderCitasSemana(){
           const tipo = tipoInfo(c.tipo);
           const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
           const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
-          const claseEstado = atrasada ? " atrasada" : (c.clienteEspera ? " espera" : "");
+          const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : ""));
           return `<div class="cita-mini${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
         }).join("")}
       </div>`;
@@ -671,7 +671,6 @@ function setCitasView(v){
 function openNewCita(){
   editingCitaId = null;
   document.getElementById("citaModalTitle").textContent = "Nueva cita";
-  document.getElementById("citaDeleteBtn").style.display = "none";
   document.getElementById("citaConvertirBtn").style.display = "none";
   document.getElementById("c_estadoField").style.display = "none";
   document.getElementById("citaFormError").style.display = "none";
@@ -691,7 +690,6 @@ function openEditCita(id){
   if(!c) return;
   editingCitaId = id;
   document.getElementById("citaModalTitle").textContent = "Editar cita";
-  document.getElementById("citaDeleteBtn").style.display = "block";
   document.getElementById("citaFormError").style.display = "none";
   document.getElementById("c_estadoField").style.display = "block";
   const d = new Date(c.fechaHora);
@@ -715,7 +713,6 @@ function openEditCita(id){
   ["c_fecha","c_hora","c_patente","c_cliente","c_telefono","c_modelo","c_sucursal","c_tipo","c_estado","c_notas","c_cliente_espera","c_prueba_ruta"].forEach(id=>{
     document.getElementById(id).disabled = !gestiona || document.getElementById(id).disabled;
   });
-  document.getElementById("citaDeleteBtn").style.display = gestiona ? "block" : "none";
   document.getElementById("citaSaveBtn").style.display = gestiona ? "inline-block" : "none";
   if(!gestiona) document.getElementById("citaConvertirBtn").style.display = "none";
 
@@ -757,15 +754,7 @@ async function saveCita(){
   }
 }
 
-async function deleteCita(){
-  if(!editingCitaId) return;
-  if(!confirm("¿Eliminar esta cita?")) return;
-  try{
-    await api(`/api/citas/${editingCitaId}`, { method:"DELETE" });
-    closeCitaModal();
-    loadCitas();
-  }catch(e){ alert(e.message); }
-}
+// Nota: las citas no se pueden eliminar (se conservan como historial) — sin función de borrado aquí.
 
 function convertirCitaEnOT(){
   const c = citasCache.find(x=>x.id===editingCitaId);
@@ -1011,12 +1000,15 @@ document.getElementById("citasViewSemanaBtn").addEventListener("click", ()=>setC
 document.getElementById("citasFilterSucursal").addEventListener("change", renderCitas);
 document.getElementById("citaCancelBtn").addEventListener("click", closeCitaModal);
 document.getElementById("citaSaveBtn").addEventListener("click", saveCita);
-document.getElementById("citaDeleteBtn").addEventListener("click", deleteCita);
+// El listener de eliminar cita se quitó — ya no existe esa función.
 document.getElementById("citaConvertirBtn").addEventListener("click", convertirCitaEnOT);
 document.getElementById("citaOverlay").addEventListener("click",(e)=>{ if(e.target.id==="citaOverlay") closeCitaModal(); });
 
 document.getElementById("reportesBtn").addEventListener("click", openReportes);
 document.getElementById("reportesVolverBtn").addEventListener("click", closeReportes);
+document.getElementById("reportesUnidadesBtn").addEventListener("click", ()=>{
+  window.location.href = "/api/reportes/unidades-excel";
+});
 document.getElementById("repBuscarBtn").addEventListener("click", cargarReporte);
 document.getElementById("historialCloseBtn").addEventListener("click", ()=>document.getElementById("historialOverlay").classList.remove("show"));
 document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e.target.id==="historialOverlay") document.getElementById("historialOverlay").classList.remove("show"); });

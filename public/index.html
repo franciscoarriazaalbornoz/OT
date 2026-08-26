@@ -128,6 +128,7 @@
       <div class="sub">Solo visible para el rol Administrador</div>
     </div>
     <div class="topbar-controls">
+      <button class="btn-ghost btn" id="reportesUnidadesBtn">Descargar unidades entregadas (Excel)</button>
       <button class="btn-ghost btn" id="reportesVolverBtn">← Volver al tablero</button>
     </div>
   </div>
@@ -199,7 +200,7 @@
     </div>
     <div class="field"><label>Notas</label><textarea id="c_notas" rows="2" placeholder="Observaciones..."></textarea></div>
     <div class="modal-actions">
-      <button class="danger-link" id="citaDeleteBtn" style="display:none;">Eliminar cita</button>
+      <span class="danger-link-off"></span>
       <div class="modal-actions-right">
         <button class="btn" id="citaCancelBtn">Cancelar</button>
         <button class="btn btn-primary" id="citaConvertirBtn" style="display:none;">Convertir en OT</button>
