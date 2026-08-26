@@ -72,6 +72,19 @@ async function logCambioEtapa(otId, etapaAnterior, etapaNueva, actor, origen) {
   );
 }
 
+// Registra la unidad en la tabla independiente apenas la OT llega a la última etapa ("Entrega").
+// No depende de que la OT siga existiendo después — así el reporte mensual no se pierde si
+// alguien borra la OT del tablero más adelante.
+async function registrarEntregaSiCorresponde(ot) {
+  if (ot.etapa !== STAGES.length - 1) return;
+  await pool.query(
+    `INSERT INTO unidades_entregadas (id, ot_id, numero, patente, cliente, sucursal, tipo, tecnico, fecha_entrega, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now(), now())
+     ON CONFLICT (ot_id) DO UPDATE SET numero=$3, patente=$4, cliente=$5, sucursal=$6, tipo=$7, tecnico=$8, fecha_entrega=now()`,
+    [uid("entrega"), ot.id, ot.numero, ot.patente, ot.cliente, ot.sucursal, ot.tipo, ot.tecnicoTrabajo || ""]
+  );
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -145,6 +158,39 @@ async function initDb() {
   `);
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS cliente_espera BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS prueba_ruta BOOLEAN DEFAULT false;`);
+  // Tabla independiente (SIN relación de borrado en cascada con ots): registra cada unidad apenas
+  // llega a "Entrega", para que el reporte mensual sobreviva aunque luego se borre la OT del tablero.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS unidades_entregadas (
+      id TEXT PRIMARY KEY,
+      ot_id TEXT UNIQUE,
+      numero TEXT DEFAULT '',
+      patente TEXT DEFAULT '',
+      cliente TEXT DEFAULT '',
+      sucursal TEXT DEFAULT '',
+      tipo TEXT DEFAULT 'general',
+      tecnico TEXT DEFAULT '',
+      fecha_entrega TIMESTAMPTZ DEFAULT now(),
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  await pool.query(`ALTER TABLE unidades_entregadas ADD COLUMN IF NOT EXISTS tecnico TEXT DEFAULT '';`);
+  // Auditoría independiente (SIN relación con ots): registra quién borró cada OT y cuándo,
+  // con una foto de cómo estaba justo antes de borrarse.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ots_eliminadas (
+      id TEXT PRIMARY KEY,
+      ot_id TEXT,
+      numero TEXT DEFAULT '',
+      patente TEXT DEFAULT '',
+      cliente TEXT DEFAULT '',
+      sucursal TEXT DEFAULT '',
+      tipo TEXT DEFAULT 'general',
+      etapa INTEGER,
+      eliminado_por TEXT DEFAULT '',
+      eliminado_en TIMESTAMPTZ DEFAULT now()
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ot_fotos (
       id TEXT PRIMARY KEY,
@@ -396,6 +442,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [id]);
   await logCambioEtapa(id, null, etapa, user ? user.nombre : "", "creacion");
+  await registrarEntregaSiCorresponde(rowToOt(rows[0]));
   res.json({ ot: rowToOt(rows[0]) });
 });
 
@@ -433,6 +480,7 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   if (merged.etapa !== existing.etapa) {
     const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
     await logCambioEtapa(req.params.id, existing.etapa, merged.etapa, urows[0] ? urows[0].nombre : "", "escritorio");
+    await registrarEntregaSiCorresponde(rowToOt(rows[0]));
   }
   res.json({ ot: rowToOt(rows[0]) });
 });
@@ -440,9 +488,18 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
 app.delete("/api/ots/:id", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
-  const { rows: existingRows } = await pool.query("SELECT sucursal FROM ots WHERE id=$1", [req.params.id]);
+  const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (existingRows[0] && !acc.isAdmin && existingRows[0].sucursal !== acc.sucursal) {
     return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
+  }
+  if (existingRows[0]) {
+    const ot = rowToOt(existingRows[0]);
+    const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+    await pool.query(
+      `INSERT INTO ots_eliminadas (id, ot_id, numero, patente, cliente, sucursal, tipo, etapa, eliminado_por, eliminado_en)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())`,
+      [uid("elim"), ot.id, ot.numero, ot.patente, ot.cliente, ot.sucursal, ot.tipo, ot.etapa, urows[0] ? urows[0].nombre : ""]
+    );
   }
   await pool.query("DELETE FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ok: true });
@@ -959,15 +1016,8 @@ app.put("/api/citas/:id", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/citas/:id", requireAuth, async (req, res) => {
-  const denied = await checkCitasAccess(req);
-  if (denied) return res.status(denied.status).json({ error: denied.error });
-  const acc = await currentUserAccess(req);
-  const { rows: existingRows } = await pool.query("SELECT sucursal FROM citas WHERE id=$1", [req.params.id]);
-  if (existingRows[0] && !acc.isAdmin && existingRows[0].sucursal !== acc.sucursal) {
-    return res.status(403).json({ error: "Esta cita pertenece a otra sucursal — no tienes acceso a ella" });
-  }
-  await pool.query("DELETE FROM citas WHERE id=$1", [req.params.id]);
-  res.json({ ok: true });
+  // Las citas no se pueden eliminar nunca (ni Administrador) — se conservan como historial.
+  res.status(403).json({ error: "Las citas no se pueden eliminar, para conservar el historial." });
 });
 
 // Borrado masivo de citas — solo Administrador. Pensado para limpiar duplicados o partir de
@@ -1088,6 +1138,7 @@ app.put("/api/public/ot/:id/stage", async (req, res) => {
     await logCambioEtapa(req.params.id, existing.etapa, etapa, actorNombre || "", "tecnico");
   }
   const { rows: updatedRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
+  if (etapa !== existing.etapa) await registrarEntregaSiCorresponde(rowToOt(updatedRows[0]));
   res.json({ ot: rowToOt(updatedRows[0]), stages: STAGES });
 });
 
@@ -1229,6 +1280,70 @@ app.get("/api/reportes/tiempos", requireAuth, requireAdmin, async (req, res) => 
   }));
 
   res.json({ stages: STAGES, promedioPorEtapa, detalle, totalOts: otRows.length, totalSaltos: detalle.reduce((a,d)=>a+d.saltos,0) });
+});
+
+// Excel descargable, solo Administrador: unidades atendidas por mes y tipo de trabajo.
+// Se arma desde la tabla independiente unidades_entregadas — sigue existiendo aunque la OT
+// original ya se haya borrado del tablero.
+app.get("/api/reportes/unidades-excel", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM unidades_entregadas ORDER BY fecha_entrega");
+
+  const mesLabel = (fecha) => {
+    const d = new Date(fecha);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  };
+  const tipoLabel = (val) => (TIPOS_TRABAJO.find(t => t.value === val) || { label: val }).label;
+
+  // Hoja "Resumen": filas = mes, columnas = tipo de trabajo, valores = cantidad, con totales.
+  const meses = [...new Set(rows.map(r => mesLabel(r.fecha_entrega)))].sort();
+  const tipos = TIPOS_TRABAJO.map(t => t.value);
+  const resumenAoa = [["Mes", ...tipos.map(tipoLabel), "Total"]];
+  meses.forEach(mes => {
+    const delMes = rows.filter(r => mesLabel(r.fecha_entrega) === mes);
+    const fila = [mes];
+    let total = 0;
+    tipos.forEach(t => {
+      const cant = delMes.filter(r => r.tipo === t).length;
+      fila.push(cant);
+      total += cant;
+    });
+    fila.push(total);
+    resumenAoa.push(fila);
+  });
+  const filaTotales = ["TOTAL"];
+  tipos.forEach(t => filaTotales.push(rows.filter(r => r.tipo === t).length));
+  filaTotales.push(rows.length);
+  resumenAoa.push(filaTotales);
+
+  // Hoja "Detalle": una fila por unidad entregada.
+  const detalleAoa = [["Mes", "Sucursal", "Tipo de trabajo", "N° OT", "Patente", "Cliente", "Técnico", "Fecha de entrega"]];
+  rows.forEach(r => {
+    detalleAoa.push([
+      mesLabel(r.fecha_entrega), r.sucursal, tipoLabel(r.tipo), r.numero, r.patente, r.cliente, r.tecnico || "",
+      new Date(r.fecha_entrega).toLocaleString("es-CL")
+    ]);
+  });
+
+  // Hoja "OT eliminadas": auditoría de quién borró qué y cuándo — sobrevive aunque la OT ya no exista.
+  const { rows: eliminadasRows } = await pool.query("SELECT * FROM ots_eliminadas ORDER BY eliminado_en DESC");
+  const eliminadasAoa = [["N° OT", "Patente", "Cliente", "Sucursal", "Tipo de trabajo", "Etapa al momento de borrar", "Eliminado por", "Fecha de eliminación"]];
+  eliminadasRows.forEach(r => {
+    eliminadasAoa.push([
+      r.numero, r.patente, r.cliente, r.sucursal, tipoLabel(r.tipo),
+      r.etapa !== null && r.etapa !== undefined ? STAGES[r.etapa] || r.etapa : "",
+      r.eliminado_por, new Date(r.eliminado_en).toLocaleString("es-CL")
+    ]);
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenAoa), "Resumen por mes y tipo");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalleAoa), "Detalle");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(eliminadasAoa), "OT eliminadas");
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="unidades-entregadas-${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.send(buffer);
 });
 
 app.use(express.static(path.join(__dirname, "public")));
