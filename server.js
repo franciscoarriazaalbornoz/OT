@@ -416,7 +416,14 @@ app.get("/api/ots", requireAuth, async (req, res) => {
   const { rows } = acc.isAdmin
     ? await pool.query("SELECT * FROM ots ORDER BY updated_at DESC")
     : await pool.query("SELECT * FROM ots WHERE sucursal=$1 ORDER BY updated_at DESC", [acc.sucursal]);
-  res.json({ ots: rows.map(rowToOt) });
+
+  // Una sola consulta extra para saber cuáles OT tienen fotos (en vez de una consulta por OT).
+  const { rows: fotoCounts } = rows.length
+    ? await pool.query("SELECT ot_id, COUNT(*)::int AS n FROM ot_fotos WHERE ot_id = ANY($1::text[]) GROUP BY ot_id", [rows.map(r=>r.id)])
+    : { rows: [] };
+  const conFotos = new Set(fotoCounts.filter(f => f.n > 0).map(f => f.ot_id));
+
+  res.json({ ots: rows.map(r => ({ ...rowToOt(r), tieneFotos: conFotos.has(r.id) })) });
 });
 
 app.post("/api/ots", requireAuth, async (req, res) => {
@@ -1132,8 +1139,11 @@ app.put("/api/public/ot/:id/stage", async (req, res) => {
   const { etapa, actorNombre } = req.body || {};
   if (!Number.isInteger(etapa) || etapa < 0 || etapa >= STAGES.length) return res.status(400).json({ error: "Etapa inválida" });
   const existing = rowToOt(rows[0]);
-  await pool.query("UPDATE ots SET etapa=$1, responsable=$2, updated_at=now() WHERE id=$3",
-    [etapa, actorNombre || existing.responsable, req.params.id]);
+  // El "Responsable" de la OT queda como se definió al crearla (o como lo edite alguien de
+  // escritorio a propósito) — moverla desde el QR ya NO lo pisa. Quién hizo cada cambio de etapa
+  // queda igual registrado en el historial (logCambioEtapa, abajo).
+  await pool.query("UPDATE ots SET etapa=$1, updated_at=now() WHERE id=$2",
+    [etapa, req.params.id]);
   if (etapa !== existing.etapa) {
     await logCambioEtapa(req.params.id, existing.etapa, etapa, actorNombre || "", "tecnico");
   }
