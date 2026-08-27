@@ -61,6 +61,7 @@ function rowToOt(r) {
     checkPptoAutorizado: r.check_ppto_autorizado === true,
     trabajoIniciadoAt: r.trabajo_iniciado_at ? new Date(r.trabajo_iniciado_at).toISOString() : null,
     tecnicoTrabajo: r.tecnico_trabajo || "",
+    trabajoTerminadoAt: r.trabajo_terminado_at ? new Date(r.trabajo_terminado_at).toISOString() : null,
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
   };
@@ -87,10 +88,10 @@ async function logCambioEtapa(otId, etapaAnterior, etapaNueva, actor, origen) {
 async function registrarEntregaSiCorresponde(ot) {
   if (ot.etapa !== STAGES.length - 1) return;
   await pool.query(
-    `INSERT INTO unidades_entregadas (id, ot_id, numero, patente, cliente, sucursal, tipo, tecnico, fecha_entrega, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now(), now())
-     ON CONFLICT (ot_id) DO UPDATE SET numero=$3, patente=$4, cliente=$5, sucursal=$6, tipo=$7, tecnico=$8, fecha_entrega=now()`,
-    [uid("entrega"), ot.id, ot.numero, ot.patente, ot.cliente, ot.sucursal, ot.tipo, ot.tecnicoTrabajo || ""]
+    `INSERT INTO unidades_entregadas (id, ot_id, numero, patente, cliente, sucursal, tipo, tecnico, trabajo_iniciado_at, trabajo_terminado_at, fecha_entrega, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())
+     ON CONFLICT (ot_id) DO UPDATE SET numero=$3, patente=$4, cliente=$5, sucursal=$6, tipo=$7, tecnico=$8, trabajo_iniciado_at=$9, trabajo_terminado_at=$10, fecha_entrega=now()`,
+    [uid("entrega"), ot.id, ot.numero, ot.patente, ot.cliente, ot.sucursal, ot.tipo, ot.tecnicoTrabajo || "", ot.trabajoIniciadoAt || null, ot.trabajoTerminadoAt || null]
   );
 }
 
@@ -131,6 +132,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_autorizado BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS trabajo_iniciado_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tecnico_trabajo TEXT;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS trabajo_terminado_at TIMESTAMPTZ;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -184,6 +186,8 @@ async function initDb() {
     );
   `);
   await pool.query(`ALTER TABLE unidades_entregadas ADD COLUMN IF NOT EXISTS tecnico TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE unidades_entregadas ADD COLUMN IF NOT EXISTS trabajo_iniciado_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE unidades_entregadas ADD COLUMN IF NOT EXISTS trabajo_terminado_at TIMESTAMPTZ;`);
   // Auditoría independiente (SIN relación con ots): registra quién borró cada OT y cuándo,
   // con una foto de cómo estaba justo antes de borrarse.
   await pool.query(`
@@ -196,6 +200,20 @@ async function initDb() {
       sucursal TEXT DEFAULT '',
       tipo TEXT DEFAULT 'general',
       etapa INTEGER,
+      eliminado_por TEXT DEFAULT '',
+      eliminado_en TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  // Foto del usuario justo antes de borrarlo — para que el reporte de uso siga mostrando su
+  // rol y sucursal aunque la cuenta ya no exista.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usuarios_eliminados (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      username TEXT DEFAULT '',
+      nombre TEXT DEFAULT '',
+      rol TEXT DEFAULT '',
+      sucursal TEXT DEFAULT '',
       eliminado_por TEXT DEFAULT '',
       eliminado_en TIMESTAMPTZ DEFAULT now()
     );
@@ -417,6 +435,16 @@ app.post("/api/users/importar-excel", requireAuth, requireAdmin, async (req, res
 
 app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
   if (req.params.id === req.session.userId) return res.status(400).json({ error: "No puedes eliminar tu propio usuario" });
+  const { rows: existingRows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.params.id]);
+  if (existingRows[0]) {
+    const u = existingRows[0];
+    const { rows: adminRows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
+    await pool.query(
+      `INSERT INTO usuarios_eliminados (id, user_id, username, nombre, rol, sucursal, eliminado_por, eliminado_en)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, now())`,
+      [uid("uelim"), u.id, u.username, u.nombre, u.rol, u.sucursal, adminRows[0] ? adminRows[0].nombre : ""]
+    );
+  }
   await pool.query("DELETE FROM users WHERE id=$1", [req.params.id]);
   res.json({ ok: true });
 });
@@ -1139,7 +1167,21 @@ app.put("/api/public/ot/:id/inicio-trabajo", async (req, res) => {
   const { rows } = await pool.query("SELECT id FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
   const { actorNombre } = req.body || {};
-  await pool.query("UPDATE ots SET trabajo_iniciado_at=now(), tecnico_trabajo=$1 WHERE id=$2", [actorNombre || "", req.params.id]);
+  await pool.query("UPDATE ots SET trabajo_iniciado_at=now(), trabajo_terminado_at=NULL, tecnico_trabajo=$1 WHERE id=$2", [actorNombre || "", req.params.id]);
+  const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
+  res.json({ ot: rowToOt(updated[0]) });
+});
+
+app.put("/api/public/ot/:id/termino-trabajo", async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
+  const existing = rowToOt(rows[0]);
+  const idxControlCalidad = STAGES.indexOf("Control de calidad");
+  const { actorNombre } = req.body || {};
+  await pool.query("UPDATE ots SET trabajo_terminado_at=now(), etapa=$1, updated_at=now() WHERE id=$2", [idxControlCalidad, req.params.id]);
+  if (idxControlCalidad !== existing.etapa) {
+    await logCambioEtapa(req.params.id, existing.etapa, idxControlCalidad, actorNombre || existing.tecnicoTrabajo || "", "tecnico");
+  }
   const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updated[0]) });
 });
@@ -1344,13 +1386,40 @@ app.get("/api/reportes/unidades-excel", requireAuth, requireAdmin, async (req, r
   filaTotales.push(rows.length);
   resumenAoa.push(filaTotales);
 
+  // Duración de trabajo: solo se puede calcular si el técnico marcó inicio Y término (ambas horas
+  // guardadas). Se muestra en horas con un decimal, para que sea fácil de leer y de promediar.
+  const duracionHoras = (r) => {
+    if (!r.trabajo_iniciado_at || !r.trabajo_terminado_at) return null;
+    const ms = new Date(r.trabajo_terminado_at) - new Date(r.trabajo_iniciado_at);
+    return ms > 0 ? Math.round((ms / 3600000) * 10) / 10 : null;
+  };
+
   // Hoja "Detalle": una fila por unidad entregada.
-  const detalleAoa = [["Mes", "Sucursal", "Tipo de trabajo", "N° OT", "Patente", "Cliente", "Técnico", "Fecha de entrega"]];
+  const detalleAoa = [["Mes", "Sucursal", "Tipo de trabajo", "N° OT", "Patente", "Cliente", "Técnico", "Inicio de trabajo", "Término de trabajo", "Duración (horas)", "Fecha de entrega"]];
   rows.forEach(r => {
+    const dur = duracionHoras(r);
     detalleAoa.push([
       mesLabel(r.fecha_entrega), r.sucursal, tipoLabel(r.tipo), r.numero, r.patente, r.cliente, r.tecnico || "",
+      r.trabajo_iniciado_at ? new Date(r.trabajo_iniciado_at).toLocaleString("es-CL") : "",
+      r.trabajo_terminado_at ? new Date(r.trabajo_terminado_at).toLocaleString("es-CL") : "",
+      dur !== null ? dur : "",
       new Date(r.fecha_entrega).toLocaleString("es-CL")
     ]);
+  });
+
+  // Hoja "Tiempo por técnico": promedio de horas de trabajo (inicio → término), solo con las
+  // unidades donde quedaron registradas ambas horas.
+  const porTecnico = new Map();
+  rows.forEach(r => {
+    const dur = duracionHoras(r);
+    if (dur === null || !r.tecnico) return;
+    if (!porTecnico.has(r.tecnico)) porTecnico.set(r.tecnico, []);
+    porTecnico.get(r.tecnico).push(dur);
+  });
+  const tiempoTecnicoAoa = [["Técnico", "Unidades con tiempo registrado", "Promedio (horas)", "Mínimo (horas)", "Máximo (horas)"]];
+  [...porTecnico.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([tecnico, duraciones]) => {
+    const promedio = Math.round((duraciones.reduce((a,b)=>a+b,0) / duraciones.length) * 10) / 10;
+    tiempoTecnicoAoa.push([tecnico, duraciones.length, promedio, Math.min(...duraciones), Math.max(...duraciones)]);
   });
 
   // Hoja "OT eliminadas": auditoría de quién borró qué y cuándo — sobrevive aunque la OT ya no exista.
@@ -1367,12 +1436,102 @@ app.get("/api/reportes/unidades-excel", requireAuth, requireAdmin, async (req, r
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenAoa), "Resumen por mes y tipo");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalleAoa), "Detalle");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tiempoTecnicoAoa), "Tiempo por técnico");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(eliminadasAoa), "OT eliminadas");
   const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="unidades-entregadas-${new Date().toISOString().slice(0,10)}.xlsx"`);
   res.send(buffer);
+});
+
+// Excel descargable, solo Administrador: uso de la app por cada persona registrada.
+// Se arma juntando 5 fuentes que YA guardan el nombre como texto plano (no como enlace a la
+// cuenta), así que la actividad de alguien sigue apareciendo aunque después se borre su usuario
+// — para esos casos se usa la "foto" guardada en usuarios_eliminados.
+app.get("/api/reportes/uso-usuarios-excel", requireAuth, requireAdmin, async (req, res) => {
+  const limpiarNombre = (n) => String(n || "").replace(/\s*\(Excel\)\s*$/i, "").trim();
+
+  const [cambiosEtapa, otCreadas, entregasTecnico, citasCreadas, otEliminadas, tiemposTrabajo] = await Promise.all([
+    pool.query("SELECT actor AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM etapa_historial WHERE actor <> '' GROUP BY actor"),
+    pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(updated_at) AS ultima FROM ots WHERE creado_por <> '' GROUP BY creado_por"),
+    pool.query("SELECT tecnico AS nombre, COUNT(*)::int AS n, MAX(fecha_entrega) AS ultima FROM unidades_entregadas WHERE tecnico <> '' GROUP BY tecnico"),
+    pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM citas WHERE creado_por <> '' GROUP BY creado_por"),
+    pool.query("SELECT eliminado_por AS nombre, COUNT(*)::int AS n, MAX(eliminado_en) AS ultima FROM ots_eliminadas WHERE eliminado_por <> '' GROUP BY eliminado_por"),
+    pool.query("SELECT tecnico, trabajo_iniciado_at, trabajo_terminado_at FROM unidades_entregadas WHERE tecnico <> '' AND trabajo_iniciado_at IS NOT NULL AND trabajo_terminado_at IS NOT NULL"),
+  ]);
+
+  // Promedio de horas de trabajo (inicio → término) por técnico, solo con unidades donde
+  // quedaron registradas ambas horas.
+  const duracionesPorTecnico = new Map();
+  tiemposTrabajo.rows.forEach(r => {
+    const ms = new Date(r.trabajo_terminado_at) - new Date(r.trabajo_iniciado_at);
+    if (ms <= 0) return;
+    const horas = ms / 3600000;
+    if (!duracionesPorTecnico.has(r.tecnico)) duracionesPorTecnico.set(r.tecnico, []);
+    duracionesPorTecnico.get(r.tecnico).push(horas);
+  });
+  const promedioTiempo = (nombre) => {
+    const lista = duracionesPorTecnico.get(nombre);
+    if (!lista || lista.length === 0) return "";
+    return Math.round((lista.reduce((a,b)=>a+b,0) / lista.length) * 10) / 10;
+  };
+
+  // Junta las 5 fuentes en un mapa por nombre (quitando el sufijo "(Excel)" de las citas
+  // importadas, para que cuenten junto al resto de la actividad de esa misma persona).
+  const mapa = new Map();
+  const sumar = (rows, campo) => {
+    rows.forEach(r => {
+      const nombre = limpiarNombre(r.nombre);
+      if (!nombre) return;
+      if (!mapa.has(nombre)) mapa.set(nombre, { nombre, cambiosEtapa:0, otCreadas:0, entregasTecnico:0, citasCreadas:0, otEliminadas:0, ultima:null });
+      const fila = mapa.get(nombre);
+      fila[campo] += r.n;
+      if (r.ultima && (!fila.ultima || new Date(r.ultima) > new Date(fila.ultima))) fila.ultima = r.ultima;
+    });
+  };
+  sumar(cambiosEtapa.rows, "cambiosEtapa");
+  sumar(otCreadas.rows, "otCreadas");
+  sumar(entregasTecnico.rows, "entregasTecnico");
+  sumar(citasCreadas.rows, "citasCreadas");
+  sumar(otEliminadas.rows, "otEliminadas");
+
+  // Enriquecer con rol/sucursal: primero busca en usuarios activos; si no está, busca la última
+  // foto guardada de cuando se eliminó esa cuenta.
+  const { rows: usuariosActivos } = await pool.query("SELECT nombre, username, rol, sucursal FROM users");
+  const { rows: usuariosBorrados } = await pool.query("SELECT DISTINCT ON (nombre) nombre, username, rol, sucursal, eliminado_en FROM usuarios_eliminados ORDER BY nombre, eliminado_en DESC");
+  const mapaActivos = new Map(usuariosActivos.map(u => [u.nombre, u]));
+  const mapaBorrados = new Map(usuariosBorrados.map(u => [u.nombre, u]));
+
+  const filas = [...mapa.values()].map(f => {
+    const activo = mapaActivos.get(f.nombre);
+    const borrado = mapaBorrados.get(f.nombre);
+    const info = activo || borrado || {};
+    return {
+      ...f,
+      username: info.username || "",
+      rol: info.rol || "",
+      sucursal: info.sucursal || "",
+      estado: activo ? "Activo" : (borrado ? "Eliminado" : "Sin cuenta registrada"),
+    };
+  }).sort((a,b) => a.nombre.localeCompare(b.nombre));
+
+  const aoa = [["Nombre","Usuario","Rol","Sucursal","Estado","Cambios de etapa","OT creadas","Unidades entregadas (técnico)","Tiempo promedio de trabajo (horas)","Citas creadas","OT eliminadas","Última actividad"]];
+  filas.forEach(f => {
+    aoa.push([
+      f.nombre, f.username, f.rol, f.sucursal, f.estado,
+      f.cambiosEtapa, f.otCreadas, f.entregasTecnico, promedioTiempo(f.nombre), f.citasCreadas, f.otEliminadas,
+      f.ultima ? new Date(f.ultima).toLocaleString("es-CL") : ""
+    ]);
+  });
+
+  const wb2 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet(aoa), "Uso por usuario");
+  const buffer2 = XLSX.write(wb2, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="uso-por-usuario-${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.send(buffer2);
 });
 
 app.use(express.static(path.join(__dirname, "public")));
