@@ -254,9 +254,30 @@ document.getElementById("inicioTrabajoBtn").addEventListener("click", async ()=>
     msg.className = "msg error";
   }
 });
-document.getElementById("terminoTrabajoBtn").addEventListener("click", ()=>{
-  const idx = stages.indexOf("Control de calidad");
-  if(idx >= 0) updateStage(idx);
+document.getElementById("terminoTrabajoBtn").addEventListener("click", async ()=>{
+  const msg = document.getElementById("msg");
+  const actor = document.getElementById("actorSelect").value;
+  if(!actor){
+    msg.textContent = "Selecciona tu nombre antes de continuar.";
+    msg.className = "msg error";
+    return;
+  }
+  try{
+    const res = await fetch(`/api/public/ot/${otId}/termino-trabajo`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorNombre: actor })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || "No se pudo guardar");
+    ot = data.ot;
+    render();
+    msg.textContent = "Término de trabajo registrado ✓";
+    msg.className = "msg ok";
+  }catch(e){
+    msg.textContent = e.message;
+    msg.className = "msg error";
+  }
 });
 document.getElementById("addFotoBtn").addEventListener("click", ()=>document.getElementById("fotoInput").click());
 document.getElementById("fotoInput").addEventListener("change", (e)=>{

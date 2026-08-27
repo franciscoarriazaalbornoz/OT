@@ -1012,6 +1012,9 @@ document.getElementById("reportesVolverBtn").addEventListener("click", closeRepo
 document.getElementById("reportesUnidadesBtn").addEventListener("click", ()=>{
   window.location.href = "/api/reportes/unidades-excel";
 });
+document.getElementById("reportesUsoUsuariosBtn").addEventListener("click", ()=>{
+  window.location.href = "/api/reportes/uso-usuarios-excel";
+});
 document.getElementById("repBuscarBtn").addEventListener("click", cargarReporte);
 document.getElementById("historialCloseBtn").addEventListener("click", ()=>document.getElementById("historialOverlay").classList.remove("show"));
 document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e.target.id==="historialOverlay") document.getElementById("historialOverlay").classList.remove("show"); });
