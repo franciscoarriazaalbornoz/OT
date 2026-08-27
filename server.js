@@ -1169,10 +1169,10 @@ app.put("/api/public/ot/:id/stage", async (req, res) => {
 });
 
 app.get("/api/public/consulta", async (req, res) => {
-  const patente = (req.query.patente || "").trim().toUpperCase().replace(/\s+/g, "");
+  const patente = (req.query.patente || "").trim().toUpperCase().replace(/[\s-]+/g, "");
   if (!patente) return res.status(400).json({ error: "Ingresa tu patente" });
   const { rows } = await pool.query(
-    "SELECT * FROM ots WHERE UPPER(REPLACE(patente,' ','')) = $1 ORDER BY updated_at DESC LIMIT 1",
+    "SELECT * FROM ots WHERE UPPER(REPLACE(REPLACE(patente,' ',''),'-','')) = $1 ORDER BY updated_at DESC LIMIT 1",
     [patente]
   );
   if (!rows[0]) return res.status(404).json({ error: "No encontramos una orden de trabajo activa con esa patente" });
@@ -1191,11 +1191,14 @@ app.get("/api/public/consulta", async (req, res) => {
 app.get("/api/public/buscar", async (req, res) => {
   const q = (req.query.q || "").trim();
   if (!q) return res.json({ resultados: [] });
+  // Compara la patente sin guion en ambos lados: da igual si el técnico lo escribe con guion,
+  // sin guion, o si la OT quedó guardada de una forma distinta a como se busca.
+  const qSinGuion = q.replace(/-/g, "");
   const { rows } = await pool.query(
     `SELECT id, numero, patente, cliente, modelo, etapa FROM ots
-     WHERE UPPER(patente) LIKE UPPER($1) OR UPPER(numero) LIKE UPPER($1)
+     WHERE REPLACE(UPPER(patente), '-', '') LIKE UPPER($1) OR UPPER(numero) LIKE UPPER($2)
      ORDER BY updated_at DESC LIMIT 8`,
-    [`%${q}%`]
+    [`%${qSinGuion}%`, `%${q}%`]
   );
   res.json({ resultados: rows, stages: STAGES, tipos: TIPOS_TRABAJO });
 });
