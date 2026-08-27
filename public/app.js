@@ -1,5 +1,6 @@
 let STAGES = [];
 let SUCURSALES = [];
+let SUCURSALES_OT = [];
 let ROLES = [];
 let TIPOS = [];
 let currentUser = null;
@@ -67,7 +68,7 @@ async function doLogin(){
 
 function onLogin(data){
   currentUser = data.user;
-  STAGES = data.stages; SUCURSALES = data.sucursales; ROLES = data.roles; TIPOS = data.tipos || [];
+  STAGES = data.stages; SUCURSALES = data.sucursales; SUCURSALES_OT = data.sucursalesOt || data.sucursales; ROLES = data.roles; TIPOS = data.tipos || [];
   hide("loginScreen");
   if(currentUser.mustChangePassword){
     show("changePwScreen");
@@ -99,13 +100,14 @@ function enterApp(){
   document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasBtn").style.display = ["Mecánico","Lavado y entrega"].includes(currentUser.rol) ? "none" : "inline-block";
-  // La sucursal del usuario es mandante: si no es Administrador, no tiene sentido ofrecerle
-  // un filtro de "otras sucursales" — el servidor de todas formas solo le va a devolver la suya.
-  document.getElementById("filterSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  // La sucursal del usuario es mandante: el filtro solo tiene sentido si puede ver más de una
+  // (Administrador, o Rancagua que también ve Rancagua DyP) — si solo ve la suya, no aporta nada.
+  const accesiblesOt = currentUser.rol === "Administrador" ? SUCURSALES_OT : (currentUser.sucursalesAccesibles || [currentUser.sucursal]);
+  document.getElementById("filterSucursal").style.display = accesiblesOt.length > 1 ? "inline-block" : "none";
   document.getElementById("citasFilterSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("f_etapa").innerHTML = STAGES.map((s,i)=>`<option value="${i}">${s}</option>`).join("");
-  populateSelect(document.getElementById("f_sucursal"), SUCURSALES);
-  populateSelect(document.getElementById("filterSucursal"), SUCURSALES, "Todas las sucursales");
+  populateSelect(document.getElementById("f_sucursal"), accesiblesOt);
+  populateSelect(document.getElementById("filterSucursal"), accesiblesOt, "Todas las sucursales");
   const fTipo = document.getElementById("f_tipo");
   fTipo.innerHTML = TIPOS.map(t=>`<option value="${t.value}">${t.label}</option>`).join("");
   const filterTipo = document.getElementById("filterTipo");
@@ -306,7 +308,7 @@ function openNew(){
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
-  document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador";
+  document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador" && (currentUser.sucursalesAccesibles||[]).length <= 1;
   document.getElementById("f_etapa").value = "0";
   document.getElementById("f_prioridad").value = "normal";
   document.getElementById("f_tipo").value = "general";
@@ -330,7 +332,7 @@ function openEdit(id){
   document.getElementById("f_cliente").value = o.cliente||"";
   document.getElementById("f_modelo").value = o.modelo||"";
   document.getElementById("f_sucursal").value = o.sucursal||SUCURSALES[0];
-  document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador";
+  document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador" && (currentUser.sucursalesAccesibles||[]).length <= 1;
   document.getElementById("f_etapa").value = String(o.etapa||0);
   document.getElementById("f_responsable").value = o.responsable||"";
   document.getElementById("f_prioridad").value = o.prioridad||"normal";
