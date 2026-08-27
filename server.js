@@ -19,6 +19,15 @@ const pool = new Pool({
 
 const STAGES = ["Recepción","Diagnóstico","Presupuesto/Aprobación","Repuestos","Reparación","Control de calidad","Lavado","Entrega"];
 const SUCURSALES = ["Summit Colón","Rancagua","Matta","Antofagasta","Calama"];
+// "Rancagua DyP" es un valor de sucursal SOLO para OT — no es un local aparte con citas o
+// usuarios propios. Comparte la agenda de Citas y los usuarios de "Rancagua".
+const SUCURSALES_OT = [...SUCURSALES, "Rancagua DyP"];
+
+// Qué valores de sucursal puede ver/editar en OT un usuario con esta sucursal asignada.
+// Rancagua ve las dos; el resto solo la suya.
+function sucursalesAccesibles(sucUsuario) {
+  return sucUsuario === "Rancagua" ? ["Rancagua", "Rancagua DyP"] : [sucUsuario];
+}
 const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador"];
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
 const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
@@ -57,7 +66,7 @@ function rowToOt(r) {
   };
 }
 function publicUser(u) {
-  return { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, sucursal: u.sucursal, mustChangePassword: !!u.mustChangePassword };
+  return { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, sucursal: u.sucursal, mustChangePassword: !!u.mustChangePassword, sucursalesAccesibles: sucursalesAccesibles(u.sucursal) };
 }
 function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -241,7 +250,10 @@ async function requireAdmin(req, res, next) {
 async function currentUserAccess(req) {
   const { rows } = await pool.query("SELECT rol, sucursal FROM users WHERE id=$1", [req.session.userId]);
   if (!rows[0]) return null;
-  return { rol: rows[0].rol, sucursal: rows[0].sucursal, isAdmin: rows[0].rol === "Administrador" };
+  return {
+    rol: rows[0].rol, sucursal: rows[0].sucursal, isAdmin: rows[0].rol === "Administrador",
+    sucursalesAccesibles: sucursalesAccesibles(rows[0].sucursal)
+  };
 }
 
 // Verifica que el usuario autenticado tenga acceso a la sucursal de una OT puntual.
@@ -251,7 +263,7 @@ async function checkOtAccess(req, otId) {
   if (!acc) return { status: 401, error: "No autenticado" };
   const { rows } = await pool.query("SELECT sucursal FROM ots WHERE id=$1", [otId]);
   if (!rows[0]) return { status: 404, error: "OT no encontrada" };
-  if (!acc.isAdmin && rows[0].sucursal !== acc.sucursal) {
+  if (!acc.isAdmin && !acc.sucursalesAccesibles.includes(rows[0].sucursal)) {
     return { status: 403, error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" };
   }
   return null;
@@ -305,7 +317,7 @@ app.post("/api/logout", (req, res) => { req.session.destroy(() => res.json({ ok:
 app.get("/api/me", requireAuth, async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   if (!rows[0]) return res.status(401).json({ error: "No autenticado" });
-  res.json({ user: publicUser(rowToUser(rows[0])), stages: STAGES, sucursales: SUCURSALES, roles: ROLES, tipos: TIPOS_TRABAJO });
+  res.json({ user: publicUser(rowToUser(rows[0])), stages: STAGES, sucursales: SUCURSALES, sucursalesOt: SUCURSALES_OT, roles: ROLES, tipos: TIPOS_TRABAJO });
 });
 
 app.post("/api/change-password", requireAuth, async (req, res) => {
@@ -415,7 +427,7 @@ app.get("/api/ots", requireAuth, async (req, res) => {
   if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows } = acc.isAdmin
     ? await pool.query("SELECT * FROM ots ORDER BY updated_at DESC")
-    : await pool.query("SELECT * FROM ots WHERE sucursal=$1 ORDER BY updated_at DESC", [acc.sucursal]);
+    : await pool.query("SELECT * FROM ots WHERE sucursal = ANY($1::text[]) ORDER BY updated_at DESC", [acc.sucursalesAccesibles]);
 
   // Una sola consulta extra para saber cuáles OT tienen fotos (en vez de una consulta por OT).
   const { rows: fotoCounts } = rows.length
@@ -436,9 +448,12 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   const id = uid("ot");
   const etapa = Number.isInteger(b.etapa) ? b.etapa : 0;
   const fecha = b.fechaIngreso || new Date().toISOString().slice(0, 10);
-  // La sucursal del usuario es mandante: si no es Administrador, la OT queda SIEMPRE en su propia sucursal,
-  // sin importar qué haya enviado el formulario.
-  const sucursalFinal = acc.isAdmin ? (b.sucursal || SUCURSALES[0]) : acc.sucursal;
+  // La sucursal del usuario sigue siendo mandante: si no es Administrador, la OT queda dentro de
+  // su propio conjunto de sucursales accesibles (para la mayoría, solo la suya; para Rancagua,
+  // también Rancagua DyP si lo elige a propósito) — nunca en una sucursal ajena.
+  const sucursalFinal = acc.isAdmin
+    ? (b.sucursal || SUCURSALES_OT[0])
+    : (acc.sucursalesAccesibles.includes(b.sucursal) ? b.sucursal : acc.sucursal);
   await pool.query(
     `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, tipo, notas, creado_por, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`,
@@ -459,13 +474,14 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: "OT no encontrada" });
   const existing = rowToOt(existingRows[0]);
-  if (!acc.isAdmin && existing.sucursal !== acc.sucursal) {
+  if (!acc.isAdmin && !acc.sucursalesAccesibles.includes(existing.sucursal)) {
     return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
   }
   const b = req.body || {};
   const merged = { ...existing, ...b };
-  // Un usuario que no sea Administrador no puede mover la OT a otra sucursal.
-  if (!acc.isAdmin) merged.sucursal = acc.sucursal;
+  // Un usuario que no sea Administrador no puede mover la OT fuera de su conjunto de sucursales
+  // accesibles (para Rancagua, puede alternar libremente entre Rancagua y Rancagua DyP).
+  if (!acc.isAdmin && !acc.sucursalesAccesibles.includes(merged.sucursal)) merged.sucursal = acc.sucursal;
   // El check de presupuesto solo lo puede marcar/desmarcar Asesor de servicio, Jefe de taller,
   // Repuestos o Administrador — cualquier otro rol que envíe un cambio ahí queda ignorado,
   // sin afectar el resto de los campos que sí haya editado.
@@ -496,7 +512,7 @@ app.delete("/api/ots/:id", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
-  if (existingRows[0] && !acc.isAdmin && existingRows[0].sucursal !== acc.sucursal) {
+  if (existingRows[0] && !acc.isAdmin && !acc.sucursalesAccesibles.includes(existingRows[0].sucursal)) {
     return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
   }
   if (existingRows[0]) {
