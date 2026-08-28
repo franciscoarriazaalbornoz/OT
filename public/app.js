@@ -100,11 +100,14 @@ function enterApp(){
   document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasBtn").style.display = ["Mecánico","Lavado y entrega"].includes(currentUser.rol) ? "none" : "inline-block";
+  document.getElementById("newBtn").style.display = currentUser.rol === "Contact Center" ? "none" : "inline-block";
   // La sucursal del usuario es mandante: el filtro solo tiene sentido si puede ver más de una
-  // (Administrador, o Rancagua que también ve Rancagua DyP) — si solo ve la suya, no aporta nada.
-  const accesiblesOt = currentUser.rol === "Administrador" ? SUCURSALES_OT : (currentUser.sucursalesAccesibles || [currentUser.sucursal]);
+  // (Administrador y Contact Center ven todas; Rancagua también ve Rancagua DyP) — si solo ve
+  // la suya, no aporta nada.
+  const veTodas = currentUser.rol === "Administrador" || currentUser.rol === "Contact Center";
+  const accesiblesOt = veTodas ? SUCURSALES_OT : (currentUser.sucursalesAccesibles || [currentUser.sucursal]);
   document.getElementById("filterSucursal").style.display = accesiblesOt.length > 1 ? "inline-block" : "none";
-  document.getElementById("citasFilterSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("citasFilterSucursal").style.display = veTodas ? "inline-block" : "none";
   document.getElementById("f_etapa").innerHTML = STAGES.map((s,i)=>`<option value="${i}">${s}</option>`).join("");
   populateSelect(document.getElementById("f_sucursal"), accesiblesOt);
   populateSelect(document.getElementById("filterSucursal"), accesiblesOt, "Todas las sucursales");
@@ -355,6 +358,17 @@ function openEdit(id){
   document.getElementById("fotosSection").style.display = "block";
   document.getElementById("fotosGrid").innerHTML = "";
   loadFotos();
+
+  const soloLectura = currentUser.rol === "Contact Center";
+  if(soloLectura){
+    document.getElementById("modalTitle").textContent = "Ver OT (solo lectura)";
+    document.getElementById("deleteBtn").style.display = "none";
+    document.getElementById("saveBtn").style.display = "none";
+    document.getElementById("overlay").querySelectorAll("input, select, textarea").forEach(el => el.disabled = true);
+  } else {
+    document.getElementById("saveBtn").style.display = "inline-block";
+  }
+
   document.getElementById("overlay").classList.add("show");
 }
 
@@ -675,6 +689,7 @@ function openNewCita(){
   editingCitaId = null;
   document.getElementById("citaModalTitle").textContent = "Nueva cita";
   document.getElementById("citaConvertirBtn").style.display = "none";
+  document.getElementById("citaDeleteBtn").style.display = "none";
   document.getElementById("c_estadoField").style.display = "none";
   document.getElementById("citaFormError").style.display = "none";
   document.getElementById("c_fecha").value = citasFecha.toISOString().slice(0,10);
@@ -717,6 +732,7 @@ function openEditCita(id){
     document.getElementById(id).disabled = !gestiona || document.getElementById(id).disabled;
   });
   document.getElementById("citaSaveBtn").style.display = gestiona ? "inline-block" : "none";
+  document.getElementById("citaDeleteBtn").style.display = currentUser.rol === "Administrador" ? "block" : "none";
   if(!gestiona) document.getElementById("citaConvertirBtn").style.display = "none";
 
   document.getElementById("citaOverlay").classList.add("show");
@@ -757,7 +773,16 @@ async function saveCita(){
   }
 }
 
-// Nota: las citas no se pueden eliminar (se conservan como historial) — sin función de borrado aquí.
+// Solo Administrador puede eliminar una cita puntual (ver openEditCita para la restricción de rol).
+async function deleteCita(){
+  if(!editingCitaId) return;
+  if(!confirm("¿Eliminar esta cita? Si ya se convirtió en OT, la OT no se borra — solo se pierde el registro de la cita.")) return;
+  try{
+    await api(`/api/citas/${editingCitaId}`, { method:"DELETE" });
+    closeCitaModal();
+    loadCitas();
+  }catch(e){ alert(e.message); }
+}
 
 function convertirCitaEnOT(){
   const c = citasCache.find(x=>x.id===editingCitaId);
@@ -1003,7 +1028,7 @@ document.getElementById("citasViewSemanaBtn").addEventListener("click", ()=>setC
 document.getElementById("citasFilterSucursal").addEventListener("change", renderCitas);
 document.getElementById("citaCancelBtn").addEventListener("click", closeCitaModal);
 document.getElementById("citaSaveBtn").addEventListener("click", saveCita);
-// El listener de eliminar cita se quitó — ya no existe esa función.
+document.getElementById("citaDeleteBtn").addEventListener("click", deleteCita);
 document.getElementById("citaConvertirBtn").addEventListener("click", convertirCitaEnOT);
 document.getElementById("citaOverlay").addEventListener("click",(e)=>{ if(e.target.id==="citaOverlay") closeCitaModal(); });
 
