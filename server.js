@@ -748,7 +748,22 @@ function corregirFechasAmbiguas(rows, idxFecha) {
     const v = rows[i][idxFecha];
     if (v instanceof Date && v.getDate() > 12) anclas.push({ pos: i, mes: v.getMonth() + 1 });
   }
-  if (anclas.length === 0) return;
+
+  // Si la pestaña NO tiene ninguna fecha sin ambigüedad (ningún día > 12), no hay forma de
+  // usar una referencia cercana — en ese caso, se asume formato chileno día/mes por defecto
+  // en TODAS las fechas ambiguas de esa pestaña (es la convención esperada, y coincide con lo
+  // que confirmamos con el cliente: sin esto, aparecían citas repartidas de forma imposible
+  // hacia meses futuros que no correspondían a como se cargan los datos).
+  if (anclas.length === 0) {
+    for (let i = 1; i < rows.length; i++) {
+      const v = rows[i][idxFecha];
+      if (!(v instanceof Date)) continue;
+      const dia = v.getDate(), mes = v.getMonth() + 1;
+      if (dia > 12 || mes > 12 || dia === mes) continue;
+      rows[i][idxFecha] = new Date(v.getFullYear(), dia - 1, mes);
+    }
+    return;
+  }
 
   for (let i = 1; i < rows.length; i++) {
     const v = rows[i][idxFecha];
