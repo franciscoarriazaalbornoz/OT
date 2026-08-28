@@ -28,7 +28,7 @@ const SUCURSALES_OT = [...SUCURSALES, "Rancagua DyP"];
 function sucursalesAccesibles(sucUsuario) {
   return sucUsuario === "Rancagua" ? ["Rancagua", "Rancagua DyP"] : [sucUsuario];
 }
-const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador"];
+const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador","Contact Center"];
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
 const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
 // Solo estos roles pueden ver y gestionar Citas previas (Administrador siempre puede).
@@ -268,8 +268,13 @@ async function requireAdmin(req, res, next) {
 async function currentUserAccess(req) {
   const { rows } = await pool.query("SELECT rol, sucursal FROM users WHERE id=$1", [req.session.userId]);
   if (!rows[0]) return null;
+  // "isAdmin" sigue siendo solo Administrador (puede crear/editar/borrar todo, exportar, importar).
+  // "veTodasSucursales" también incluye a Contact Center: ve el tablero completo de OT y Citas
+  // de todas las sucursales, pero SOLO para mirar — no puede modificar nada (eso se valida aparte
+  // en cada endpoint de escritura).
   return {
     rol: rows[0].rol, sucursal: rows[0].sucursal, isAdmin: rows[0].rol === "Administrador",
+    veTodasSucursales: rows[0].rol === "Administrador" || rows[0].rol === "Contact Center",
     sucursalesAccesibles: sucursalesAccesibles(rows[0].sucursal)
   };
 }
@@ -281,7 +286,7 @@ async function checkOtAccess(req, otId) {
   if (!acc) return { status: 401, error: "No autenticado" };
   const { rows } = await pool.query("SELECT sucursal FROM ots WHERE id=$1", [otId]);
   if (!rows[0]) return { status: 404, error: "OT no encontrada" };
-  if (!acc.isAdmin && !acc.sucursalesAccesibles.includes(rows[0].sucursal)) {
+  if (!acc.veTodasSucursales && !acc.sucursalesAccesibles.includes(rows[0].sucursal)) {
     return { status: 403, error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" };
   }
   return null;
@@ -453,7 +458,7 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 app.get("/api/ots", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
-  const { rows } = acc.isAdmin
+  const { rows } = acc.veTodasSucursales
     ? await pool.query("SELECT * FROM ots ORDER BY updated_at DESC")
     : await pool.query("SELECT * FROM ots WHERE sucursal = ANY($1::text[]) ORDER BY updated_at DESC", [acc.sucursalesAccesibles]);
 
@@ -471,6 +476,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   if (!b.numero || !String(b.numero).trim()) return res.status(400).json({ error: "Falta el número de OT" });
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
+  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes crear ni modificar OT." });
   const { rows: urows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   const user = urows[0] ? rowToUser(urows[0]) : null;
   const id = uid("ot");
@@ -499,6 +505,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
 app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
+  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes crear ni modificar OT." });
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: "OT no encontrada" });
   const existing = rowToOt(existingRows[0]);
@@ -539,6 +546,7 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
 app.delete("/api/ots/:id", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
+  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes eliminar OT." });
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (existingRows[0] && !acc.isAdmin && !acc.sucursalesAccesibles.includes(existingRows[0].sucursal)) {
     return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
@@ -575,6 +583,8 @@ app.get("/api/ots/:id/fotos", requireAuth, async (req, res) => {
 app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
   const denied = await checkOtAccess(req, req.params.id);
   if (denied) return res.status(denied.status).json({ error: denied.error });
+  const acc = await currentUserAccess(req);
+  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes subir fotos." });
   const { dataUrl } = req.body || {};
   if (!dataUrl) return res.status(400).json({ error: "Falta la imagen" });
   if ((await contarFotos(req.params.id)) >= 4) return res.status(400).json({ error: "Ya hay 4 fotos en esta OT (máximo permitido)" });
@@ -590,6 +600,8 @@ app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
 app.delete("/api/ots/:id/fotos/:fotoId", requireAuth, async (req, res) => {
   const denied = await checkOtAccess(req, req.params.id);
   if (denied) return res.status(denied.status).json({ error: denied.error });
+  const acc = await currentUserAccess(req);
+  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes eliminar fotos." });
   await pool.query("DELETE FROM ot_fotos WHERE id=$1 AND ot_id=$2", [req.params.fotoId, req.params.id]);
   res.json({ ok: true });
 });
@@ -1031,7 +1043,7 @@ app.get("/api/citas", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   const { desde, hasta } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
-  const { rows } = acc.isAdmin
+  const { rows } = acc.veTodasSucursales
     ? await pool.query("SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 ORDER BY fecha_hora", [desde, hasta])
     : await pool.query("SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 AND sucursal=$3 ORDER BY fecha_hora", [desde, hasta, acc.sucursal]);
   res.json({ citas: rows.map(rowToCita) });
@@ -1081,9 +1093,9 @@ app.put("/api/citas/:id", requireAuth, async (req, res) => {
   res.json({ cita: rowToCita(rows[0]) });
 });
 
-app.delete("/api/citas/:id", requireAuth, async (req, res) => {
-  // Las citas no se pueden eliminar nunca (ni Administrador) — se conservan como historial.
-  res.status(403).json({ error: "Las citas no se pueden eliminar, para conservar el historial." });
+app.delete("/api/citas/:id", requireAuth, requireAdmin, async (req, res) => {
+  await pool.query("DELETE FROM citas WHERE id=$1", [req.params.id]);
+  res.json({ ok: true });
 });
 
 // Borrado masivo de citas — solo Administrador. Pensado para limpiar duplicados o partir de
