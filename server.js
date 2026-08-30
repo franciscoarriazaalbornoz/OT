@@ -17,7 +17,7 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL.includes('sslmode=disable') ? false : { rejectUnauthorized: false }
 });
 
-const STAGES = ["Recepción","Diagnóstico","Presupuesto/Aprobación","Repuestos","Reparación","Control de calidad","Lavado","Entrega"];
+const STAGES = ["Recepción","Esperando asignación","Presupuesto/Aprobación","Repuestos","En trabajo","Control de calidad","Lavado","Entrega"];
 const SUCURSALES = ["Summit Colón","Rancagua","Matta","Antofagasta","Calama"];
 // "Rancagua DyP" es un valor de sucursal SOLO para OT — no es un local aparte con citas o
 // usuarios propios. Comparte la agenda de Citas y los usuarios de "Rancagua".
@@ -169,6 +169,10 @@ async function initDb() {
   `);
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS cliente_espera BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS prueba_ruta BOOLEAN DEFAULT false;`);
+  await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS numero_cita TEXT DEFAULT '';`);
+  // Único cuando viene informado (permite muchas citas con numero_cita vacío, como las creadas
+  // a mano) — así se puede usar como identificador confiable para no duplicar al reimportar.
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS citas_numero_cita_uk ON citas (numero_cita) WHERE numero_cita <> '';`);
   // Tabla independiente (SIN relación de borrado en cascada con ots): registra cada unidad apenas
   // llega a "Entrega", para que el reporte mensual sobreviva aunque luego se borre la OT del tablero.
   await pool.query(`
@@ -236,6 +240,18 @@ async function initDb() {
       ["u_admin", "admin", hash, "Administrador", "Administrador", ""]
     );
     console.log("Usuario inicial creado -> usuario: admin / clave: summit2026 (cámbiala apenas entres)");
+  }
+
+  // Migración de una sola vez por el rediseño de etapas: "Diagnóstico" (posición 1) desapareció
+  // como etapa propia — las OT que quedaron ahí pasan a "En trabajo" (posición 4), ya que están
+  // siendo atendidas. El resto de las posiciones no cambia de significado. Se ejecuta UNA sola
+  // vez (marca en app_settings) — si no, cada reinicio del servidor movería mal cualquier OT
+  // nueva que legítimamente esté en "Esperando asignación" (que ahora ocupa esa misma posición).
+  const { rows: yaMigrado } = await pool.query("SELECT value FROM app_settings WHERE key='migracion_etapas_v1'");
+  if (!yaMigrado[0]) {
+    const migradas = await pool.query("UPDATE ots SET etapa=4 WHERE etapa=1");
+    await pool.query("INSERT INTO app_settings (key, value) VALUES ('migracion_etapas_v1', 'ok') ON CONFLICT (key) DO NOTHING");
+    if (migradas.rowCount > 0) console.log(`Migración de etapas: ${migradas.rowCount} OT movidas de Diagnóstico a En trabajo.`);
   }
 }
 
@@ -480,7 +496,11 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   const { rows: urows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   const user = urows[0] ? rowToUser(urows[0]) : null;
   const id = uid("ot");
-  const etapa = Number.isInteger(b.etapa) ? b.etapa : 0;
+  const tipoFinal = TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general";
+  // Al crear la OT, si no se indica una etapa a propósito: DyP queda en "Recepción" (posición 0);
+  // el resto de los tipos de trabajo parte directo en "Esperando asignación" (posición 1).
+  const etapaPorDefecto = tipoFinal === "dyp" ? 0 : 1;
+  const etapa = Number.isInteger(b.etapa) ? b.etapa : etapaPorDefecto;
   const fecha = b.fechaIngreso || new Date().toISOString().slice(0, 10);
   // La sucursal del usuario sigue siendo mandante: si no es Administrador, la OT queda dentro de
   // su propio conjunto de sucursales accesibles (para la mayoría, solo la suya; para Rancagua,
@@ -493,7 +513,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`,
     [id, up(String(b.numero).trim()), up(b.patente) || "", fecha, b.fechaEntrega || null, up(b.cliente) || "", up(b.modelo) || "",
      sucursalFinal, etapa, up(b.responsable) || "", b.prioridad === "alta" ? "alta" : "normal",
-     TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
+     tipoFinal,
      up(b.notas) || "", user ? user.nombre : ""]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [id]);
@@ -612,6 +632,7 @@ function rowToCita(r) {
     modelo: r.modelo || "", fechaHora: r.fecha_hora ? new Date(r.fecha_hora).toISOString() : "",
     sucursal: r.sucursal || "", tipo: r.tipo || "general", estado: r.estado || "pendiente",
     clienteEspera: r.cliente_espera === true, pruebaRuta: r.prueba_ruta === true,
+    numeroCita: r.numero_cita || "",
     notas: r.notas || "", creadoPor: r.creado_por || "", otId: r.ot_id || null
   };
 }
@@ -637,7 +658,8 @@ const HEADER_ALIASES = {
   notas: ["notas", "observaciones", "comentarios"],
   esperaCliente: ["lo espera", "espera", "cliente espera", "cliente lo espera"],
   fir: ["fir"],
-  pruebaRuta: ["ruta", "prueba de ruta", "prueba ruta"]
+  pruebaRuta: ["ruta", "prueba de ruta", "prueba ruta"],
+  numeroCita: ["n° cita", "n cita", "nro cita", "numero cita", "número de cita"]
 };
 
 // Interpreta valores tipo "SI"/"NO" (o variantes) de columnas booleanas del Excel.
@@ -862,6 +884,7 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
       tipo: tipoFinal,
       clienteEspera: colMap.esperaCliente !== undefined && esSi(get("esperaCliente")),
       pruebaRuta: colMap.pruebaRuta !== undefined && esSi(get("pruebaRuta")),
+      numeroCita: colMap.numeroCita !== undefined ? String(get("numeroCita") || "").trim() : "",
       notas: colMap.notas !== undefined ? String(get("notas") || "").trim() : ""
     });
   }
@@ -877,7 +900,13 @@ function parsearExcelBuffer(buffer, acc) {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const resultado = { citas: [], errores: [], columnasDetectadas: [] };
 
-  for (const nombreHoja of wb.SheetNames) {
+  // Si el archivo trae una hoja "Detalle citas" (el resumen diario, con Sucursal y N° Cita ya
+  // incluidos), se usa SOLO esa — es el formato preferido y más confiable. El resto de las
+  // pestañas (por sucursal, o auxiliares como "Todas las citas"/"Agenda") se ignoran.
+  const hojaDetalle = wb.SheetNames.find(n => normalizarHeader(n) === "detalle citas");
+  const hojasAProcesar = hojaDetalle ? [hojaDetalle] : wb.SheetNames;
+
+  for (const nombreHoja of hojasAProcesar) {
     const sheet = wb.Sheets[nombreHoja];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
     if (rows.length < 2) continue;
@@ -895,7 +924,7 @@ function parsearExcelBuffer(buffer, acc) {
 
     const { citas, errores } = parsearFilasCitas(rows, colMap, sucursalFija);
     resultado.citas.push(...citas);
-    resultado.errores.push(...errores.map(e => wb.SheetNames.length > 1 ? `[${nombreHoja}] ${e}` : e));
+    resultado.errores.push(...errores.map(e => hojasAProcesar.length > 1 ? `[${nombreHoja}] ${e}` : e));
     resultado.columnasDetectadas = Object.keys(colMap);
   }
 
@@ -923,22 +952,32 @@ async function upsertCitasParseadas(citas, actor) {
   // 1) Una sola consulta para saber cuáles ya existen (en vez de una consulta por cita).
   const sucursales = [...new Set(citas.map(c => c.sucursal || SUCURSALES[0]))];
   const { rows: existentesRows } = await pool.query(
-    "SELECT id, patente, fecha_hora FROM citas WHERE sucursal = ANY($1::text[])",
+    "SELECT id, patente, fecha_hora, numero_cita FROM citas WHERE sucursal = ANY($1::text[])",
     [sucursales]
   );
-  const mapaExistentes = new Map();
+  // El número de cita (cuando el Excel lo trae) es el identificador más confiable — no depende
+  // de que la fecha/hora quede exactamente igual entre una carga y otra. Si no viene número de
+  // cita (por ejemplo, una cita creada a mano), se sigue usando patente + fecha/hora como antes.
+  const mapaPorNumero = new Map();
+  const mapaPorPatenteFecha = new Map();
   for (const r of existentesRows) {
+    if (r.numero_cita) mapaPorNumero.set(r.numero_cita, r.id);
     const clave = `${(r.patente || "").toUpperCase()}|${new Date(r.fecha_hora).toISOString()}`;
-    mapaExistentes.set(clave, r.id);
+    mapaPorPatenteFecha.set(clave, r.id);
   }
+  const buscarExistente = (c) => {
+    if (c.numeroCita && mapaPorNumero.has(c.numeroCita)) return mapaPorNumero.get(c.numeroCita);
+    const clave = `${(c.patente || "").toUpperCase()}|${new Date(c.fechaHora).toISOString()}`;
+    return mapaPorPatenteFecha.get(clave);
+  };
 
   const aInsertarMapa = new Map();
   const aActualizar = [];
   for (const c of citas) {
-    const clave = `${(c.patente || "").toUpperCase()}|${new Date(c.fechaHora).toISOString()}`;
-    const idExistente = mapaExistentes.get(clave);
+    const idExistente = buscarExistente(c);
+    const claveDedupe = c.numeroCita || `${(c.patente || "").toUpperCase()}|${new Date(c.fechaHora).toISOString()}`;
     if (idExistente) aActualizar.push({ ...c, id: idExistente });
-    else aInsertarMapa.set(clave, c); // si el propio archivo repite la fila, se queda con la última
+    else aInsertarMapa.set(claveDedupe, c); // si el propio archivo repite la fila, se queda con la última
   }
   const aInsertar = [...aInsertarMapa.values()];
 
@@ -950,12 +989,12 @@ async function upsertCitasParseadas(citas, actor) {
     const valores = [];
     const params = [];
     bloque.forEach((c, idx) => {
-      const base = idx * 12;
-      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10},$${base+11},$${base+12}, now())`);
-      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)", c.clienteEspera === true, c.pruebaRuta === true);
+      const base = idx * 13;
+      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10},$${base+11},$${base+12},$${base+13}, now())`);
+      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)", c.clienteEspera === true, c.pruebaRuta === true, c.numeroCita || "");
     });
     await pool.query(
-      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, created_at) VALUES ${valores.join(",")}`,
+      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, numero_cita, created_at) VALUES ${valores.join(",")}`,
       params
     );
   }
@@ -966,8 +1005,8 @@ async function upsertCitasParseadas(citas, actor) {
     const bloque = aActualizar.slice(i, i + CONCURRENCIA);
     await Promise.all(bloque.map(c =>
       pool.query(
-        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6, cliente_espera=$7, prueba_ruta=$8 WHERE id=$9`,
-        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.clienteEspera === true, c.pruebaRuta === true, c.id]
+        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6, cliente_espera=$7, prueba_ruta=$8, fecha_hora=$9, numero_cita=COALESCE(NULLIF($10,''), numero_cita) WHERE id=$11`,
+        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.clienteEspera === true, c.pruebaRuta === true, c.fechaHora, c.numeroCita || "", c.id]
       )
     ));
   }
@@ -1059,11 +1098,11 @@ app.post("/api/citas", requireAuth, async (req, res) => {
   const id = uid("cita");
   const sucursalFinal = acc.isAdmin ? (b.sucursal || SUCURSALES[0]) : acc.sucursal;
   await pool.query(
-    `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10,$11,$12, now())`,
+    `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, numero_cita, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',$9,$10,$11,$12,$13, now())`,
     [id, b.patente || "", b.cliente || "", b.telefono || "", b.modelo || "", b.fechaHora,
      sucursalFinal, TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general",
-     b.notas || "", urows[0] ? urows[0].nombre : "", b.clienteEspera === true, b.pruebaRuta === true]
+     b.notas || "", urows[0] ? urows[0].nombre : "", b.clienteEspera === true, b.pruebaRuta === true, ""]
   );
   const { rows } = await pool.query("SELECT * FROM citas WHERE id=$1", [id]);
   res.json({ cita: rowToCita(rows[0]) });
