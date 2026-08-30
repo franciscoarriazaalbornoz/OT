@@ -865,7 +865,13 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
     const modeloRaw = String(get("modelo") || "").trim();
     const modeloFinal = [marca, modeloRaw].filter(Boolean).join(" ").trim();
 
-    const sucursalFinal = sucursalFija || (colMap.sucursal !== undefined ? String(get("sucursal") || "").trim() : "");
+    // Si la sucursal viene como columna explícita (ej. "Colón" en vez de "Summit Colón"), se
+    // normaliza contra los nombres oficiales — la misma lógica que ya usamos para nombres de
+    // pestaña — para que no quede guardada con un valor que no calza con ninguna sucursal real
+    // y termine invisible en los filtros.
+    const sucursalFinal = sucursalFija || (colMap.sucursal !== undefined
+      ? (nombreSucursalDesdeHoja(String(get("sucursal") || "").trim()) || String(get("sucursal") || "").trim())
+      : "");
     const tipoTexto = get("tipo");
     let tipoFinal = colMap.tipo !== undefined
       ? (TIPOS_TRABAJO.some(t => t.value === normalizarHeader(tipoTexto)) ? normalizarHeader(tipoTexto) : mapearTipoDesdeTexto(tipoTexto))
