@@ -955,19 +955,26 @@ async function descargarYParsearExcel(url, acc) {
 async function upsertCitasParseadas(citas, actor) {
   if (citas.length === 0) return { creadas: 0, actualizadas: 0 };
 
-  // 1) Una sola consulta para saber cuáles ya existen (en vez de una consulta por cita).
+  // 1) Dos consultas para saber cuáles ya existen (en vez de una consulta por cita).
+  // El número de cita es único a nivel de TODA la tabla (sin importar la sucursal) — por eso su
+  // búsqueda no se puede limitar a las sucursales del archivo que se está importando: si una
+  // cita quedó guardada antes con una sucursal mal escrita (ej. "Colón" en vez de "Summit
+  // Colón"), igual hay que encontrarla por su número para corregirla, no crear una fila nueva
+  // que chocaría con el número ya existente.
   const sucursales = [...new Set(citas.map(c => c.sucursal || SUCURSALES[0]))];
-  const { rows: existentesRows } = await pool.query(
-    "SELECT id, patente, fecha_hora, numero_cita FROM citas WHERE sucursal = ANY($1::text[])",
-    [sucursales]
-  );
+  const numerosCitaBatch = [...new Set(citas.map(c => c.numeroCita).filter(Boolean))];
+  const [porSucursal, porNumero] = await Promise.all([
+    pool.query("SELECT id, patente, fecha_hora FROM citas WHERE sucursal = ANY($1::text[])", [sucursales]),
+    numerosCitaBatch.length
+      ? pool.query("SELECT id, numero_cita FROM citas WHERE numero_cita = ANY($1::text[])", [numerosCitaBatch])
+      : { rows: [] }
+  ]);
   // El número de cita (cuando el Excel lo trae) es el identificador más confiable — no depende
   // de que la fecha/hora quede exactamente igual entre una carga y otra. Si no viene número de
   // cita (por ejemplo, una cita creada a mano), se sigue usando patente + fecha/hora como antes.
-  const mapaPorNumero = new Map();
+  const mapaPorNumero = new Map(porNumero.rows.map(r => [r.numero_cita, r.id]));
   const mapaPorPatenteFecha = new Map();
-  for (const r of existentesRows) {
-    if (r.numero_cita) mapaPorNumero.set(r.numero_cita, r.id);
+  for (const r of porSucursal.rows) {
     const clave = `${(r.patente || "").toUpperCase()}|${new Date(r.fecha_hora).toISOString()}`;
     mapaPorPatenteFecha.set(clave, r.id);
   }
