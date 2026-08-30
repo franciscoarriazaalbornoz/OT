@@ -143,9 +143,9 @@ function render(){
     : `Avanzar a: ${stages[ot.etapa+1]} →`;
 
   // Flujo simplificado para el mecánico: en vez de las flechas genéricas, dos botones claros
-  // juntos mientras la OT está en Reparación.
+  // juntos mientras la OT está en "En trabajo".
   const nombreEtapa = stages[ot.etapa];
-  const esReparacion = nombreEtapa === "Reparación";
+  const esReparacion = nombreEtapa === "En trabajo";
   const trabajoBox = document.getElementById("trabajoBox");
   const genericActions = document.getElementById("genericActions");
   trabajoBox.style.display = esReparacion ? "flex" : "none";

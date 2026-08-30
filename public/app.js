@@ -7,7 +7,7 @@ let currentUser = null;
 let ots = [];
 let editingId = null;
 
-const STAGE_COLORS = ["#6B7280","#8A7A5C","#B08900","#1D6FA5","#EB0A1E","#6B4FA0","#2E8FA6","#1E8A5F"];
+const STAGE_COLORS = ["#6B7280","#0F8A72","#B08900","#1D6FA5","#EB0A1E","#6B4FA0","#2E8FA6","#1E8A5F"];
 function tipoInfo(value){ return TIPOS.find(t=>t.value===value) || null; }
 
 function escapeHtml(s){
@@ -312,7 +312,7 @@ function openNew(){
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
   document.getElementById("f_sucursal").disabled = currentUser.rol !== "Administrador" && (currentUser.sucursalesAccesibles||[]).length <= 1;
-  document.getElementById("f_etapa").value = "0";
+  document.getElementById("f_etapa").value = "1";
   document.getElementById("f_prioridad").value = "normal";
   document.getElementById("f_tipo").value = "general";
   document.getElementById("fotosSection").style.display = "none";
@@ -632,7 +632,7 @@ function renderCitasDia(){
     const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : ""));
     return `
       <div class="cita-card${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
-        <div class="cita-hora">${hora}</div>
+        <div class="cita-hora">${hora}${c.numeroCita ? `<span class="cita-numero">#${escapeHtml(c.numeroCita)}</span>` : ""}</div>
         <div class="cita-info">
           <div class="cita-cliente">${escapeHtml(c.cliente||"Sin nombre")} ${c.patente?"· "+escapeHtml(c.patente):""}</div>
           <div class="cita-detalle">${escapeHtml(c.modelo||"")} ${c.sucursal?"· "+escapeHtml(c.sucursal):""} ${tipo?"· "+escapeHtml(tipo.label):""}</div>
@@ -692,6 +692,7 @@ function openNewCita(){
   document.getElementById("citaDeleteBtn").style.display = "none";
   document.getElementById("c_estadoField").style.display = "none";
   document.getElementById("citaFormError").style.display = "none";
+  document.getElementById("citaNumeroModal").style.display = "none";
   document.getElementById("c_fecha").value = citasFecha.toISOString().slice(0,10);
   document.getElementById("c_hora").value = "09:00";
   ["c_patente","c_cliente","c_telefono","c_modelo","c_notas"].forEach(id=>document.getElementById(id).value="");
@@ -724,6 +725,13 @@ function openEditCita(id){
   document.getElementById("c_notas").value = c.notas||"";
   document.getElementById("c_cliente_espera").checked = !!c.clienteEspera;
   document.getElementById("c_prueba_ruta").checked = !!c.pruebaRuta;
+  const numeroBox = document.getElementById("citaNumeroModal");
+  if(c.numeroCita){
+    numeroBox.textContent = `N° de cita (Excel): ${c.numeroCita}`;
+    numeroBox.style.display = "block";
+  } else {
+    numeroBox.style.display = "none";
+  }
   document.getElementById("citaConvertirBtn").style.display = c.estado==="convertida" ? "none" : "inline-block";
 
   const gestiona = puedeGestionarCitas();
@@ -796,6 +804,7 @@ function convertirCitaEnOT(){
   document.getElementById("f_modelo").value = c.modelo||"";
   document.getElementById("f_sucursal").value = c.sucursal||SUCURSALES[0];
   document.getElementById("f_tipo").value = c.tipo||"general";
+  document.getElementById("f_etapa").value = document.getElementById("f_tipo").value === "dyp" ? "0" : "1";
   let notaFinal = "Agendado el " + new Date(c.fechaHora).toLocaleString("es-CL") + (c.notas ? " — " + c.notas : "");
   if(c.pruebaRuta) notaFinal += " — REQUIERE PRUEBA DE RUTA";
   document.getElementById("f_notas").value = notaFinal;
@@ -987,6 +996,12 @@ document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("pwSaveBtn").addEventListener("click", savePassword);
 document.getElementById("newBtn").addEventListener("click", openNew);
+// Solo mientras se está CREANDO una OT (no al editar una ya existente): DyP parte en
+// "Recepción", el resto de los tipos de trabajo parte en "Esperando asignación".
+document.getElementById("f_tipo").addEventListener("change", ()=>{
+  if(editingId !== null) return;
+  document.getElementById("f_etapa").value = document.getElementById("f_tipo").value === "dyp" ? "0" : "1";
+});
 document.getElementById("cancelBtn").addEventListener("click", closeModal);
 document.getElementById("saveBtn").addEventListener("click", saveForm);
 document.getElementById("deleteBtn").addEventListener("click", deleteOT);
