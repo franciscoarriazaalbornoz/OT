@@ -1366,11 +1366,12 @@ app.get("/api/public/pantalla", async (req, res) => {
   const inicioHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 0, 0);
   const finHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 23, 59);
   const { rows: citasRows } = await pool.query(
-    "SELECT patente, cliente, fecha_hora, tipo, estado FROM citas WHERE sucursal=$1 AND fecha_hora >= $2 AND fecha_hora <= $3 ORDER BY fecha_hora",
+    "SELECT patente, cliente, fecha_hora, tipo, estado, cliente_espera, prueba_ruta FROM citas WHERE sucursal=$1 AND fecha_hora >= $2 AND fecha_hora <= $3 ORDER BY fecha_hora",
     [sucursal, inicioHoy, finHoy]
   );
   const citas = citasRows.map(c => ({
     patente: c.patente, cliente: c.cliente, tipo: c.tipo, estado: c.estado,
+    clienteEspera: c.cliente_espera === true, pruebaRuta: c.prueba_ruta === true,
     fechaHora: c.fecha_hora ? new Date(c.fecha_hora).toISOString() : ""
   }));
 
