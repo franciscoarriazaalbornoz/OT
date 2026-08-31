@@ -1,4 +1,4 @@
-const STAGE_COLORS = ["#6B7280","#8A7A5C","#B08900","#1D6FA5","#EB0A1E","#6B4FA0","#2E8FA6","#1E8A5F"];
+const STAGE_COLORS = ["#6B7280","#0F8A72","#B08900","#1D6FA5","#EB0A1E","#6B4FA0","#2E8FA6","#1E8A5F"];
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
