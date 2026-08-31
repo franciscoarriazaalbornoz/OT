@@ -37,10 +37,20 @@ function renderCitas(data){
     el.innerHTML = `<div class="tv-citas-empty">Sin citas hoy</div>`;
     return;
   }
+  const ahora = new Date();
+  const MINUTOS_ATRASO_PANTALLA = 60; // 1 hora, más conservador que el umbral del escritorio (30 min)
   el.innerHTML = citas.map(c => {
     const tipo = tiposByValue[c.tipo];
     const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL", { hour:"2-digit", minute:"2-digit" });
-    const clase = c.estado === "convertida" ? " convertida" : "";
+    // Misma prioridad que el tablero de escritorio: atrasada/no llegó > convertida > cliente
+    // espera > prueba de ruta > sin color (pendiente, a tiempo).
+    const atrasada = c.estado === "no_show" ||
+      (c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO_PANTALLA * 60000);
+    const clase = atrasada ? " no-show"
+      : c.estado === "convertida" ? " convertida"
+      : c.clienteEspera ? " espera"
+      : c.pruebaRuta ? " ruta"
+      : "";
     return `
       <div class="tv-cita${clase}" style="border-left-color:${tipo ? "#"+tipo.color : "var(--border-strong)"}">
         <div class="hora">${hora}</div>
