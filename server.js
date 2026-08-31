@@ -1358,7 +1358,23 @@ app.get("/api/public/pantalla", async (req, res) => {
     numero: o.numero, patente: o.patente, cliente: o.cliente, modelo: o.modelo,
     etapa: o.etapa, prioridad: o.prioridad, tipo: o.tipo, fechaEntrega: o.fechaEntrega
   }));
-  res.json({ sucursal, ots, stages: STAGES, tipos: TIPOS_TRABAJO });
+
+  // Citas de HOY (hora de Chile) para esa misma sucursal — para la franja angosta de la pantalla.
+  const ahora = new Date();
+  const fmtHoy = new Intl.DateTimeFormat("en-US", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" });
+  const partesHoy = fmtHoy.formatToParts(ahora).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  const inicioHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 0, 0);
+  const finHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 23, 59);
+  const { rows: citasRows } = await pool.query(
+    "SELECT patente, cliente, fecha_hora, tipo, estado FROM citas WHERE sucursal=$1 AND fecha_hora >= $2 AND fecha_hora <= $3 ORDER BY fecha_hora",
+    [sucursal, inicioHoy, finHoy]
+  );
+  const citas = citasRows.map(c => ({
+    patente: c.patente, cliente: c.cliente, tipo: c.tipo, estado: c.estado,
+    fechaHora: c.fecha_hora ? new Date(c.fecha_hora).toISOString() : ""
+  }));
+
+  res.json({ sucursal, ots, citas, stages: STAGES, tipos: TIPOS_TRABAJO });
 });
 
 app.get("/consulta", (req, res) => { res.sendFile(path.join(__dirname, "public", "consulta.html")); });
