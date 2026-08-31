@@ -778,17 +778,23 @@ const MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agos
 // si no, se deja tal cual. Las filas sin ninguna ancla cercana no se tocan.
 function corregirFechasAmbiguas(rows, idxFecha) {
   const anclas = [];
+  const fechasDistintas = new Set();
   for (let i = 1; i < rows.length; i++) {
     const v = rows[i][idxFecha];
-    if (v instanceof Date && v.getDate() > 12) anclas.push({ pos: i, mes: v.getMonth() + 1 });
+    if (v instanceof Date) {
+      if (v.getDate() > 12) anclas.push({ pos: i, mes: v.getMonth() + 1 });
+      fechasDistintas.add(`${v.getFullYear()}-${v.getMonth()}-${v.getDate()}`);
+    }
   }
 
-  // Si la pestaña NO tiene ninguna fecha sin ambigüedad (ningún día > 12), no hay forma de
-  // usar una referencia cercana — en ese caso, se asume formato chileno día/mes por defecto
-  // en TODAS las fechas ambiguas de esa pestaña (es la convención esperada, y coincide con lo
-  // que confirmamos con el cliente: sin esto, aparecían citas repartidas de forma imposible
-  // hacia meses futuros que no correspondían a como se cargan los datos).
-  if (anclas.length === 0) {
+  // Si la pestaña NO tiene ninguna fecha sin ambigüedad (ningún día > 12) Y ADEMÁS hay varias
+  // fechas distintas (un histórico real, con muchas citas repartidas en el tiempo), se asume
+  // formato chileno día/mes por defecto en todas las fechas ambiguas — esto es lo que
+  // confirmamos con el cliente para el caso de Rancagua. Pero si TODAS las filas comparten
+  // exactamente la misma fecha (como pasa con "Detalle citas", que es un resumen de un solo
+  // día), no hay nada que "corregir" — esa única fecha ya viene bien tal cual, y aplicar el
+  // intercambio la movería a un día equivocado sin ninguna razón real para hacerlo.
+  if (anclas.length === 0 && fechasDistintas.size > 1) {
     for (let i = 1; i < rows.length; i++) {
       const v = rows[i][idxFecha];
       if (!(v instanceof Date)) continue;
@@ -798,6 +804,7 @@ function corregirFechasAmbiguas(rows, idxFecha) {
     }
     return;
   }
+  if (anclas.length === 0) return; // una sola fecha compartida por todas las filas: se deja tal cual
 
   for (let i = 1; i < rows.length; i++) {
     const v = rows[i][idxFecha];
