@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantalla — Seguimiento de OT</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body{background:var(--bg-header);margin:0;}
+  .tv-wrap{min-height:100vh;display:flex;flex-direction:row;}
+
+  .tv-citas{width:15%;min-width:190px;background:#161616;display:flex;flex-direction:column;border-right:1px solid #2A2A2A;}
+  .tv-citas-head{color:#fff;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:16px 14px 10px;border-bottom:1px solid #2A2A2A;}
+  .tv-citas-list{flex:1;overflow:hidden;padding:10px;}
+  .tv-cita{background:#fff;border-radius:8px;padding:7px 9px;margin-bottom:6px;border-left:4px solid var(--border-strong);}
+  .tv-cita.convertida{background:#E4F1EA;}
+  .tv-cita .hora{font-family:var(--mono);font-weight:800;font-size:11.5px;}
+  .tv-cita .cli{font-size:10.5px;font-weight:700;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tv-cita .pat{font-family:var(--mono);font-size:9.5px;color:var(--text-2);}
+  .tv-citas-empty{color:#6b6963;font-size:11px;text-align:center;padding:16px 8px;}
+
+  .tv-main{width:85%;display:flex;flex-direction:column;min-width:0;}
+  .tv-top{display:flex;justify-content:space-between;align-items:center;padding:18px 28px;color:#fff;}
+  .tv-top h1{font-size:22px;margin:0;}
+  .tv-top .suc{color:var(--accent);font-weight:800;}
+  .tv-clock{font-family:var(--mono);font-size:20px;color:#cfcdc7;}
+  .tv-board{flex:1;display:flex;gap:14px;padding:0 20px 20px;overflow-x:auto;}
+  .tv-col{flex:1;min-width:150px;background:#1F1F1F;border-radius:14px;padding:12px;display:flex;flex-direction:column;}
+  .tv-col-head{color:#fff;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.2px;padding:4px 6px 8px;display:flex;justify-content:space-between;gap:4px;}
+  .tv-col-bar{height:4px;border-radius:4px;margin:0 6px 10px;}
+  .tv-cards{flex:1;overflow:hidden;}
+  .tv-card{background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:7px;border-left:5px solid var(--border-strong);}
+  .tv-card .ot{font-family:var(--mono);font-weight:800;font-size:13px;}
+  .tv-card .cli{font-size:13px;font-weight:700;margin-top:2px;}
+  .tv-card .mod{font-size:11px;color:var(--text-2);}
+  .tv-empty{color:#6b6963;font-size:11.5px;text-align:center;padding:16px 0;}
+
+  .tv-board.compact .tv-card{padding:6px 10px;margin-bottom:5px;}
+  .tv-board.compact .tv-card .mod{display:none;}
+  .tv-board.ultra-compact .tv-card{padding:4px 9px;margin-bottom:4px;border-left-width:3px;}
+  .tv-board.ultra-compact .tv-card .mod{display:none;}
+  .tv-board.ultra-compact .tv-card .cli{font-size:11px;}
+
+  .picker{max-width:420px;margin:60px auto;background:#fff;border-radius:14px;padding:26px;}
+  .picker h1{font-size:18px;margin:0 0 14px;}
+  .picker button{display:block;width:100%;padding:12px;margin-bottom:8px;border-radius:8px;border:1px solid var(--border-strong);background:#fff;font-size:14px;font-weight:600;cursor:pointer;}
+  .picker button:hover{background:#F7F6F3;}
+</style>
+</head>
+<body>
+<div id="pickerScreen" style="display:none;">
+  <div class="picker">
+    <h1>Elige la sucursal para esta pantalla</h1>
+    <div id="pickerButtons"></div>
+  </div>
+</div>
+
+<div id="tvScreen" class="tv-wrap" style="display:none;">
+  <div class="tv-citas">
+    <div class="tv-citas-head">Citas de hoy</div>
+    <div class="tv-citas-list" id="tvCitasList"></div>
+  </div>
+  <div class="tv-main">
+    <div class="tv-top">
+      <h1>Seguimiento de OT — <span class="suc" id="tvSucursal"></span></h1>
+      <div class="tv-clock" id="tvClock"></div>
+    </div>
+    <div class="tv-board" id="tvBoard"></div>
+  </div>
+</div>
+
+<script src="/pantalla.js"></script>
+</body>
+</html>
