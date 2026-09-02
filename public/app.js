@@ -629,7 +629,7 @@ function renderCitasDia(){
     // Una cita atrasada (pasó la hora y sigue "pendiente") es más urgente que "cliente espera" —
     // si se dan ambas a la vez, manda el aviso de atrasada.
     const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
-    const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : ""));
+    const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : (c.pruebaRuta ? " ruta" : "")));
     return `
       <div class="cita-card${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
         <div class="cita-hora">${hora}${c.numeroCita ? `<span class="cita-numero">#${escapeHtml(c.numeroCita)}</span>` : ""}</div>
@@ -639,6 +639,7 @@ function renderCitasDia(){
           ${c.pruebaRuta ? `<span class="cita-chip-ruta">Prueba de ruta</span>` : ""}
           ${atrasada ? `<span class="cita-chip-atrasada">⚠ No ha ingresado</span>` : ""}
         </div>
+        ${c.unidadCampana ? `<span class="cita-campana" title="Unidad con campaña">C</span>` : ""}
         <span class="cita-estado ${c.estado}">${estadoLabel(c.estado)}</span>
       </div>`;
   }).join("");
@@ -666,8 +667,8 @@ function renderCitasSemana(){
           const tipo = tipoInfo(c.tipo);
           const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
           const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
-          const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : ""));
-          return `<div class="cita-mini${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}</div>`;
+          const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : (c.pruebaRuta ? " ruta" : "")));
+          return `<div class="cita-mini${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}${c.unidadCampana ? `<span class="cita-campana-mini" title="Unidad con campaña">C</span>` : ""}</div>`;
         }).join("")}
       </div>`;
   }).join("");

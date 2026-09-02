@@ -65,36 +65,60 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .citas-fecha-label{font-size:14px;font-weight:700;color:var(--text);min-width:170px;text-align:center;}
 
 .citas-dia{padding:6px 24px 30px;max-width:800px;}
-.cita-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:14px;cursor:pointer;border-left:4px solid var(--border-strong);}
+.cita-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:14px;cursor:pointer;border-left:8px solid var(--border-strong);}
 .cita-card:hover{border-color:var(--border-strong);box-shadow:0 1px 4px rgba(0,0,0,.06);}
 .cita-hora{font-family:var(--mono);font-size:14px;font-weight:700;min-width:52px;}
+.cita-numero{display:block;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--text-2);margin-top:2px;}
+.cita-numero-modal{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--text-2);margin:-8px 0 12px;}
 .cita-info{flex:1;min-width:0;}
 .cita-cliente{font-size:13.5px;font-weight:600;}
 .cita-detalle{font-size:11.5px;color:var(--text-2);}
 .cita-estado{font-size:10px;font-weight:700;border-radius:12px;padding:3px 10px;white-space:nowrap;}
+.cita-campana{font-size:26px;font-weight:900;color:#D70C3E;line-height:1;font-family:var(--mono);}
 .cita-estado.pendiente{background:#FEF3D6;color:#7A4E06;}
 .cita-estado.convertida{background:#E4F1EA;color:#0F5A38;}
 .cita-estado.no_show{background:#FBE6E6;color:#8C1D1D;}
 .cita-chip-ruta{display:inline-block;margin-top:3px;font-size:9.5px;font-weight:700;color:#0A4A7A;background:#DCEBFA;border-radius:5px;padding:2px 7px;}
 .cita-chip-atrasada{display:inline-block;margin-top:3px;margin-left:5px;font-size:9.5px;font-weight:700;color:#fff;background:#8C0A24;border-radius:5px;padding:2px 7px;}
-.cita-card.espera{background:#FFF4CC;}
+.cita-card.espera{background:#E8600C;}
+.cita-card.espera .cita-hora,
+.cita-card.espera .cita-cliente,
+.cita-card.espera .cita-detalle,
+.cita-card.espera .cita-numero{color:#fff;}
+.cita-card.espera .cita-estado.pendiente{background:#fff;color:#B83A00;}
+.cita-card.ruta{background:#1D6FA5;}
+.cita-card.ruta .cita-hora,
+.cita-card.ruta .cita-cliente,
+.cita-card.ruta .cita-detalle,
+.cita-card.ruta .cita-numero{color:#fff;}
+.cita-card.ruta .cita-estado.pendiente{background:#fff;color:#0A4A7A;}
 .cita-card.atrasada{background:#D70C3E;}
 .cita-card.atrasada .cita-hora,
 .cita-card.atrasada .cita-cliente,
 .cita-card.atrasada .cita-detalle{color:#fff;}
 .cita-card.atrasada .cita-estado.pendiente{background:#fff;color:#8C1D1D;}
-.cita-mini.espera{background:#FFF4CC;}
+.cita-mini.espera{background:#E8600C;color:#fff;font-weight:700;}
+.cita-mini.espera .h{color:#fff;}
+.cita-mini.ruta{background:#1D6FA5;color:#fff;font-weight:700;}
+.cita-mini.ruta .h{color:#fff;}
 .cita-mini.atrasada{background:#D70C3E;color:#fff;font-weight:700;}
 .cita-mini.atrasada .h{color:#fff;}
-.cita-card.convertida{background:#E4F1EA;}
-.cita-mini.convertida{background:#E4F1EA;}
+.cita-card.convertida{background:#1E8A5F;}
+.cita-card.convertida .cita-hora,
+.cita-card.convertida .cita-cliente,
+.cita-card.convertida .cita-detalle,
+.cita-card.convertida .cita-numero{color:#fff;}
+.cita-card.convertida .cita-estado.convertida{background:#fff;color:#0F5A38;}
+.cita-mini.convertida{background:#1E8A5F;color:#fff;font-weight:700;}
+.cita-mini.convertida .h{color:#fff;}
 .citas-empty{text-align:center;color:var(--text-3);font-size:13px;padding:40px 0;}
 
 .citas-semana{display:flex;gap:10px;padding:6px 24px 30px;overflow-x:auto;}
 .citas-semana-col{flex:0 0 175px;background:#EDEBE4;border-radius:12px;padding:10px;min-height:200px;}
 .citas-semana-col .dia-head{font-size:11.5px;font-weight:700;text-transform:uppercase;color:var(--text-2);padding:2px 4px 8px;}
 .citas-semana-col .dia-head.hoy{color:var(--accent);}
-.cita-mini{background:#fff;border:1px solid var(--border);border-left:3px solid var(--border-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:10.5px;cursor:pointer;}
+.cita-mini{background:#fff;border:1px solid var(--border);border-left:6px solid var(--border-strong);border-radius:7px;padding:6px 8px;margin-bottom:6px;font-size:10.5px;cursor:pointer;}
+.cita-campana-mini{float:right;font-size:14px;font-weight:900;color:#D70C3E;line-height:1;font-family:var(--mono);}
 .cita-mini:hover{box-shadow:0 1px 3px rgba(0,0,0,.08);}
 .cita-mini .h{font-family:var(--mono);font-weight:700;}
 
