@@ -170,6 +170,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS cliente_espera BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS prueba_ruta BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS numero_cita TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS unidad_campana BOOLEAN DEFAULT false;`);
   // Único cuando viene informado (permite muchas citas con numero_cita vacío, como las creadas
   // a mano) — así se puede usar como identificador confiable para no duplicar al reimportar.
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS citas_numero_cita_uk ON citas (numero_cita) WHERE numero_cita <> '';`);
@@ -633,6 +634,7 @@ function rowToCita(r) {
     sucursal: r.sucursal || "", tipo: r.tipo || "general", estado: r.estado || "pendiente",
     clienteEspera: r.cliente_espera === true, pruebaRuta: r.prueba_ruta === true,
     numeroCita: r.numero_cita || "",
+    unidadCampana: r.unidad_campana === true,
     notas: r.notas || "", creadoPor: r.creado_por || "", otId: r.ot_id || null
   };
 }
@@ -659,7 +661,8 @@ const HEADER_ALIASES = {
   esperaCliente: ["lo espera", "espera", "cliente espera", "cliente lo espera"],
   fir: ["fir"],
   pruebaRuta: ["ruta", "prueba de ruta", "prueba ruta"],
-  numeroCita: ["n° cita", "n cita", "nro cita", "numero cita", "número de cita"]
+  numeroCita: ["n° cita", "n cita", "nro cita", "numero cita", "número de cita"],
+  unidadCampana: ["unidad con campaña", "unidad con campana", "unidad campaña", "unidad campana"]
 };
 
 // Interpreta valores tipo "SI"/"NO" (o variantes) de columnas booleanas del Excel.
@@ -898,6 +901,7 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
       clienteEspera: colMap.esperaCliente !== undefined && esSi(get("esperaCliente")),
       pruebaRuta: colMap.pruebaRuta !== undefined && esSi(get("pruebaRuta")),
       numeroCita: colMap.numeroCita !== undefined ? String(get("numeroCita") || "").trim() : "",
+      unidadCampana: colMap.unidadCampana !== undefined && esSi(get("unidadCampana")),
       notas: colMap.notas !== undefined ? String(get("notas") || "").trim() : ""
     });
   }
@@ -1009,12 +1013,12 @@ async function upsertCitasParseadas(citas, actor) {
     const valores = [];
     const params = [];
     bloque.forEach((c, idx) => {
-      const base = idx * 13;
-      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10},$${base+11},$${base+12},$${base+13}, now())`);
-      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)", c.clienteEspera === true, c.pruebaRuta === true, c.numeroCita || "");
+      const base = idx * 14;
+      valores.push(`($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},'pendiente',$${base+9},$${base+10},$${base+11},$${base+12},$${base+13},$${base+14}, now())`);
+      params.push(uid("cita"), c.patente, c.cliente, c.telefono, c.modelo, c.fechaHora, c.sucursal || SUCURSALES[0], c.tipo, c.notas, actor + " (Excel)", c.clienteEspera === true, c.pruebaRuta === true, c.numeroCita || "", c.unidadCampana === true);
     });
     await pool.query(
-      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, numero_cita, created_at) VALUES ${valores.join(",")}`,
+      `INSERT INTO citas (id, patente, cliente, telefono, modelo, fecha_hora, sucursal, tipo, estado, notas, creado_por, cliente_espera, prueba_ruta, numero_cita, unidad_campana, created_at) VALUES ${valores.join(",")}`,
       params
     );
   }
@@ -1025,8 +1029,8 @@ async function upsertCitasParseadas(citas, actor) {
     const bloque = aActualizar.slice(i, i + CONCURRENCIA);
     await Promise.all(bloque.map(c =>
       pool.query(
-        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6, cliente_espera=$7, prueba_ruta=$8, fecha_hora=$9, numero_cita=COALESCE(NULLIF($10,''), numero_cita) WHERE id=$11`,
-        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.clienteEspera === true, c.pruebaRuta === true, c.fechaHora, c.numeroCita || "", c.id]
+        `UPDATE citas SET cliente=$1, telefono=$2, modelo=$3, sucursal=$4, tipo=$5, notas=$6, cliente_espera=$7, prueba_ruta=$8, fecha_hora=$9, numero_cita=COALESCE(NULLIF($10,''), numero_cita), unidad_campana=$11 WHERE id=$12`,
+        [c.cliente, c.telefono, c.modelo, c.sucursal || SUCURSALES[0], c.tipo, c.notas, c.clienteEspera === true, c.pruebaRuta === true, c.fechaHora, c.numeroCita || "", c.unidadCampana === true, c.id]
       )
     ));
   }
@@ -1373,12 +1377,13 @@ app.get("/api/public/pantalla", async (req, res) => {
   const inicioHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 0, 0);
   const finHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 23, 59);
   const { rows: citasRows } = await pool.query(
-    "SELECT patente, cliente, fecha_hora, tipo, estado, cliente_espera, prueba_ruta FROM citas WHERE sucursal=$1 AND fecha_hora >= $2 AND fecha_hora <= $3 ORDER BY fecha_hora",
+    "SELECT patente, cliente, fecha_hora, tipo, estado, cliente_espera, prueba_ruta, unidad_campana FROM citas WHERE sucursal=$1 AND fecha_hora >= $2 AND fecha_hora <= $3 ORDER BY fecha_hora",
     [sucursal, inicioHoy, finHoy]
   );
   const citas = citasRows.map(c => ({
     patente: c.patente, cliente: c.cliente, tipo: c.tipo, estado: c.estado,
     clienteEspera: c.cliente_espera === true, pruebaRuta: c.prueba_ruta === true,
+    unidadCampana: c.unidad_campana === true,
     fechaHora: c.fecha_hora ? new Date(c.fecha_hora).toISOString() : ""
   }));
 
