@@ -53,7 +53,7 @@ function renderCitas(data){
       : "";
     return `
       <div class="tv-cita${clase}" style="border-left-color:${tipo ? "#"+tipo.color : "var(--border-strong)"}">
-        <div class="hora">${hora}</div>
+        <div class="hora">${hora}${c.unidadCampana ? `<span class="tv-campana" title="Unidad con campaña">C</span>` : ""}</div>
         <div class="cli">${escapeHtml(c.cliente || "Sin nombre")}</div>
         <div class="pat">${escapeHtml(c.patente || "")}</div>
       </div>`;
