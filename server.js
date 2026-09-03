@@ -662,7 +662,7 @@ const HEADER_ALIASES = {
   fir: ["fir"],
   pruebaRuta: ["ruta", "prueba de ruta", "prueba ruta"],
   numeroCita: ["n° cita", "n cita", "nro cita", "numero cita", "número de cita"],
-  unidadCampana: ["unidad con campaña", "unidad con campana", "unidad campaña", "unidad campana"]
+  unidadCampana: ["unidad con campaña", "unidad con campana", "unidad campaña", "unidad campana", "campaña", "campana"]
 };
 
 // Interpreta valores tipo "SI"/"NO" (o variantes) de columnas booleanas del Excel.
