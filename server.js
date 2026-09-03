@@ -1553,6 +1553,60 @@ app.get("/api/reportes/unidades-excel", requireAuth, requireAdmin, async (req, r
   res.send(buffer);
 });
 
+// Excel descargable, solo Administrador: exporta las citas de un rango de fechas (día, semana o
+// mes, elegido desde el panel de Citas), con una hoja de resumen de No-Show por mes y sucursal
+// y una hoja de detalle con cada cita.
+app.get("/api/citas/exportar-excel", requireAuth, requireAdmin, async (req, res) => {
+  const { desde, hasta } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
+  const { rows } = await pool.query(
+    "SELECT * FROM citas WHERE fecha_hora >= $1 AND fecha_hora < $2 ORDER BY sucursal, fecha_hora",
+    [desde, hasta]
+  );
+
+  const mesLabel = (fecha) => {
+    const d = new Date(fecha);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`;
+  };
+  const tipoLabel = (v) => (TIPOS_TRABAJO.find(t=>t.value===v) || {}).label || v;
+  const estadoLabelMap = { pendiente: "Pendiente", convertida: "Convertida", no_show: "No llegó" };
+
+  // Hoja "Resumen No-Show": una fila por combinación de mes + sucursal, con el total de citas,
+  // cuántas fueron "No llegó" (no_show), y el porcentaje — para comparar sucursales y meses.
+  const resumenMapa = new Map();
+  rows.forEach(r => {
+    const clave = `${mesLabel(r.fecha_hora)}|${r.sucursal}`;
+    if (!resumenMapa.has(clave)) resumenMapa.set(clave, { mes: mesLabel(r.fecha_hora), sucursal: r.sucursal, total: 0, noShow: 0 });
+    const fila = resumenMapa.get(clave);
+    fila.total++;
+    if (r.estado === "no_show") fila.noShow++;
+  });
+  const resumenAoa = [["Mes", "Sucursal", "Total citas", "No llegó", "% No llegó"]];
+  [...resumenMapa.values()].sort((a,b) => a.mes.localeCompare(b.mes) || a.sucursal.localeCompare(b.sucursal)).forEach(f => {
+    resumenAoa.push([f.mes, f.sucursal, f.total, f.noShow, f.total ? `${Math.round((f.noShow/f.total)*1000)/10}%` : "0%"]);
+  });
+
+  // Hoja "Detalle": una fila por cita.
+  const detalleAoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Patente", "Cliente", "Tipo de trabajo", "Estado", "Cliente espera", "Prueba de ruta", "Campaña"]];
+  rows.forEach(r => {
+    const f = new Date(r.fecha_hora);
+    detalleAoa.push([
+      f.toLocaleDateString("es-CL"), f.toLocaleTimeString("es-CL", { hour:"2-digit", minute:"2-digit" }),
+      r.sucursal, r.numero_cita || "", r.patente || "", r.cliente || "", tipoLabel(r.tipo),
+      estadoLabelMap[r.estado] || r.estado, r.cliente_espera ? "Sí" : "", r.prueba_ruta ? "Sí" : "", r.unidad_campana ? "Sí" : ""
+    ]);
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenAoa), "Resumen No-Show");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalleAoa), "Detalle");
+  const buffer2 = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="citas-${desde.slice(0,10)}-a-${hasta.slice(0,10)}.xlsx"`);
+  res.send(buffer2);
+});
+
 // Excel descargable, solo Administrador: uso de la app por cada persona registrada.
 // Se arma juntando 5 fuentes que YA guardan el nombre como texto plano (no como enlace a la
 // cuenta), así que la actividad de alguien sigue apareciendo aunque después se borre su usuario
