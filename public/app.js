@@ -563,6 +563,17 @@ function weekRange(d){
   const end = new Date(monday); end.setDate(end.getDate()+7);
   return [monday, end];
 }
+function monthRange(d){
+  const start = new Date(d.getFullYear(), d.getMonth(), 1, 0,0,0);
+  const end = new Date(d.getFullYear(), d.getMonth()+1, 1, 0,0,0);
+  return [start, end];
+}
+function exportarCitas(rango){
+  const [desde, hasta] = rango==="dia" ? dayRange(citasFecha) : rango==="semana" ? weekRange(citasFecha) : monthRange(citasFecha);
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}T00:00:00`;
+  document.getElementById("citasExportarOverlay").classList.remove("show");
+  window.location.href = `/api/citas/exportar-excel?desde=${encodeURIComponent(iso(desde))}&hasta=${encodeURIComponent(iso(hasta))}`;
+}
 function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
 const MINUTOS_ATRASO = 30;
 
@@ -579,6 +590,7 @@ function openCitas(){
   document.getElementById("citasSyncBtn").style.display = gestiona ? "inline-block" : "none";
   document.getElementById("citasImportarArchivoBtn").style.display = gestiona ? "inline-block" : "none";
   document.getElementById("citasBorrarTodasBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("citasExportarBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   loadCitas();
 }
 function closeCitas(){
@@ -1063,6 +1075,11 @@ document.getElementById("historialOverlay").addEventListener("click",(e)=>{ if(e
 document.getElementById("citasSyncBtn").addEventListener("click", sincronizarExcel);
 document.getElementById("citasImportarArchivoBtn").addEventListener("click", ()=>document.getElementById("citasImportarArchivoInput").click());
 document.getElementById("citasBorrarTodasBtn").addEventListener("click", borrarTodasLasCitas);
+document.getElementById("citasExportarBtn").addEventListener("click", ()=>document.getElementById("citasExportarOverlay").classList.add("show"));
+document.getElementById("citasExportarCancelarBtn").addEventListener("click", ()=>document.getElementById("citasExportarOverlay").classList.remove("show"));
+document.getElementById("citasExportarDiaBtn").addEventListener("click", ()=>exportarCitas("dia"));
+document.getElementById("citasExportarSemanaBtn").addEventListener("click", ()=>exportarCitas("semana"));
+document.getElementById("citasExportarMesBtn").addEventListener("click", ()=>exportarCitas("mes"));
 document.getElementById("citasImportarArchivoInput").addEventListener("change", (e)=>{
   const file = e.target.files[0];
   if(file) importarCitasArchivo(file);

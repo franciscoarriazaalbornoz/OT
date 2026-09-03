@@ -73,6 +73,7 @@
       <button class="btn-ghost btn" id="citasSyncBtn">Sincronizar desde Excel</button>
       <button class="btn-ghost btn" id="citasImportarArchivoBtn">Importar archivo Excel</button>
       <button class="btn-ghost btn" id="citasBorrarTodasBtn" style="display:none;color:#8C1D1D;">Borrar todas las citas</button>
+      <button class="btn-ghost btn" id="citasExportarBtn" style="display:none;">Exportar Excel</button>
       <input type="file" id="citasImportarArchivoInput" accept=".xlsx,.xls,.csv" style="display:none;">
       <button class="btn-ghost btn" id="citasVolverBtn">← Volver al tablero</button>
       <button class="btn btn-primary" id="citasNewBtn">+ Nueva cita</button>
@@ -165,6 +166,21 @@
       <div class="modal-actions-right">
         <button class="btn" id="historialCloseBtn">Cerrar</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="citasExportarOverlay">
+  <div class="modal" style="max-width:360px;">
+    <h2>Exportar citas</h2>
+    <p style="color:var(--text-2);font-size:13px;margin:-6px 0 16px;">Incluye un resumen de No-Show por mes y sucursal, más el detalle de cada cita.</p>
+    <div class="field-group" style="display:flex;flex-direction:column;gap:8px;">
+      <button class="btn-ghost btn" id="citasExportarDiaBtn" style="width:100%;">Día actual</button>
+      <button class="btn-ghost btn" id="citasExportarSemanaBtn" style="width:100%;">Semana actual</button>
+      <button class="btn-ghost btn" id="citasExportarMesBtn" style="width:100%;">Mes actual</button>
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn" id="citasExportarCancelarBtn">Cancelar</button>
     </div>
   </div>
 </div>
