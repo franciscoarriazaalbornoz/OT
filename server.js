@@ -1733,6 +1733,64 @@ app.get("/api/reportes/uso-usuarios-excel", requireAuth, requireAdmin, async (re
   res.send(buffer2);
 });
 
+// Excel descargable, solo Administrador: quién salta etapas clave al mover una OT — es decir,
+// cambios de etapa que pasan por encima de "Esperando asignación", "En trabajo", "Lavado" o
+// "Entrega" sin detenerse ahí. Se calcula sobre etapa_historial, que ya registra cada cambio con
+// quién lo hizo — igual que el resto de los reportes de uso.
+app.get("/api/reportes/etapas-saltadas-excel", requireAuth, requireAdmin, async (req, res) => {
+  const ETAPAS_CLAVE = ["Esperando asignación", "En trabajo", "Lavado", "Entrega"]
+    .map(nombre => ({ nombre, idx: STAGES.indexOf(nombre) }))
+    .filter(e => e.idx !== -1);
+
+  const { rows } = await pool.query(
+    `SELECT h.actor, h.etapa_anterior, h.etapa_nueva, h.origen, h.created_at, o.numero
+     FROM etapa_historial h JOIN ots o ON o.id = h.ot_id
+     WHERE h.etapa_anterior IS NOT NULL AND h.etapa_nueva > h.etapa_anterior + 1
+     ORDER BY h.created_at`
+  );
+
+  // Por cada salto, se determina cuáles de las 4 etapas clave quedaron "saltadas" (el cambio
+  // arrancó antes de esa etapa y llegó después de ella, sin pasar por ahí).
+  const resumenPorActor = new Map();
+  const detalle = [];
+  rows.forEach(r => {
+    const clavesSaltadas = ETAPAS_CLAVE.filter(e => r.etapa_anterior < e.idx && r.etapa_nueva > e.idx);
+    if (clavesSaltadas.length === 0) return; // saltó etapas, pero ninguna de las 4 clave
+    const actor = r.actor || "(sin nombre)";
+    if (!resumenPorActor.has(actor)) {
+      const inicial = { actor, total: 0 };
+      ETAPAS_CLAVE.forEach(e => inicial[e.nombre] = 0);
+      resumenPorActor.set(actor, inicial);
+    }
+    const fila = resumenPorActor.get(actor);
+    clavesSaltadas.forEach(e => { fila[e.nombre]++; fila.total++; });
+    detalle.push({
+      fecha: r.created_at, actor, numero: r.numero,
+      de: STAGES[r.etapa_anterior] || r.etapa_anterior, a: STAGES[r.etapa_nueva] || r.etapa_nueva,
+      saltadas: clavesSaltadas.map(e => e.nombre).join(", "), origen: r.origen || ""
+    });
+  });
+
+  const resumenAoa = [["Persona", ...ETAPAS_CLAVE.map(e => e.nombre), "Total de saltos"]];
+  [...resumenPorActor.values()].sort((a,b) => b.total - a.total).forEach(f => {
+    resumenAoa.push([f.actor, ...ETAPAS_CLAVE.map(e => f[e.nombre]), f.total]);
+  });
+
+  const detalleAoa = [["Fecha", "Persona", "N° OT", "De etapa", "A etapa", "Etapas que se saltó", "Origen"]];
+  detalle.forEach(d => {
+    detalleAoa.push([new Date(d.fecha).toLocaleString("es-CL"), d.actor, d.numero, d.de, d.a, d.saltadas, d.origen]);
+  });
+
+  const wb3 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb3, XLSX.utils.aoa_to_sheet(resumenAoa), "Resumen por persona");
+  XLSX.utils.book_append_sheet(wb3, XLSX.utils.aoa_to_sheet(detalleAoa), "Detalle");
+  const buffer3 = XLSX.write(wb3, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="etapas-saltadas-${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.send(buffer3);
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 3000;
