@@ -38,15 +38,26 @@ function renderCitas(data){
     return;
   }
   const ahora = new Date();
-  const MINUTOS_ATRASO_PANTALLA = 60; // 1 hora, más conservador que el umbral del escritorio (30 min)
+  // Misma escala de 5 niveles que el tablero de escritorio: 45min tono suave, se intensifica
+  // cada 15min, rojo pleno a la 1,5h, y "No-Show" a las 2h.
+  const nivelAtrasoCita = (fechaHora, estado) => {
+    if (estado !== "pendiente") return 0;
+    const minutos = (ahora - new Date(fechaHora)) / 60000;
+    if (minutos >= 120) return 5;
+    if (minutos >= 90) return 4;
+    if (minutos >= 75) return 3;
+    if (minutos >= 60) return 2;
+    if (minutos >= 45) return 1;
+    return 0;
+  };
   el.innerHTML = citas.map(c => {
     const tipo = tiposByValue[c.tipo];
     const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL", { hour:"2-digit", minute:"2-digit" });
-    // Misma prioridad que el tablero de escritorio: atrasada/no llegó > convertida > cliente
-    // espera > prueba de ruta > sin color (pendiente, a tiempo).
-    const atrasada = c.estado === "no_show" ||
-      (c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO_PANTALLA * 60000);
-    const clase = atrasada ? " no-show"
+    // Misma prioridad que el tablero de escritorio: escala de atraso/no llegó > convertida >
+    // cliente espera > prueba de ruta > sin color (pendiente, a tiempo).
+    const nivel = nivelAtrasoCita(c.fechaHora, c.estado);
+    const clase = c.estado === "no_show" ? " atraso5"
+      : nivel > 0 ? ` atraso${nivel}`
       : c.estado === "convertida" ? " convertida"
       : c.clienteEspera ? " espera"
       : c.pruebaRuta ? " ruta"

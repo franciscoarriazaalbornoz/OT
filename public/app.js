@@ -308,6 +308,8 @@ function openNew(){
   document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
   document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
   document.getElementById("tecnicoTrabajoBox").style.display = "none";
+  document.getElementById("creadoPorBox").style.display = "none";
+  document.getElementById("numeroDuplicadoWarning").style.display = "none";
   document.getElementById("f_fecha").value = new Date().toISOString().slice(0,10);
   document.getElementById("f_fecha_entrega").value = "";
   document.getElementById("f_sucursal").value = currentUser.sucursal || SUCURSALES[0];
@@ -329,6 +331,7 @@ function openEdit(id){
   document.getElementById("qrBtn").style.display = "inline-block";
   document.getElementById("formError").style.display = "none";
   document.getElementById("f_numero").value = o.numero||"";
+  document.getElementById("numeroDuplicadoWarning").style.display = "none";
   document.getElementById("f_patente").value = o.patente||"";
   document.getElementById("f_fecha").value = o.fechaIngreso||"";
   document.getElementById("f_fecha_entrega").value = o.fechaEntrega||"";
@@ -354,6 +357,12 @@ function openEdit(id){
     document.getElementById("tecnicoTrabajoNombre").textContent = o.tecnicoTrabajo;
   } else {
     document.getElementById("tecnicoTrabajoBox").style.display = "none";
+  }
+  if(o.creadoPor && currentUser.rol === "Administrador"){
+    document.getElementById("creadoPorBox").style.display = "block";
+    document.getElementById("creadoPorNombre").textContent = o.creadoPor;
+  } else {
+    document.getElementById("creadoPorBox").style.display = "none";
   }
   document.getElementById("fotosSection").style.display = "block";
   document.getElementById("fotosGrid").innerHTML = "";
@@ -575,7 +584,18 @@ function exportarCitas(rango){
   window.location.href = `/api/citas/exportar-excel?desde=${encodeURIComponent(iso(desde))}&hasta=${encodeURIComponent(iso(hasta))}`;
 }
 function estadoLabel(e){ return e==="convertida" ? "Convertida" : (e==="no_show" ? "No llegó" : "Pendiente"); }
-const MINUTOS_ATRASO = 30;
+// Escala de atraso para citas "pendiente" (sin marcar como convertida ni No llegó a mano):
+// 45min tono suave, se intensifica cada 15min, rojo pleno a la 1,5h, y a las 2h se avisa "No-Show".
+function nivelAtrasoCita(fechaHora, estado, ahora){
+  if (estado !== "pendiente") return 0;
+  const minutos = (ahora - new Date(fechaHora)) / 60000;
+  if (minutos >= 120) return 5;
+  if (minutos >= 90) return 4;
+  if (minutos >= 75) return 3;
+  if (minutos >= 60) return 2;
+  if (minutos >= 45) return 1;
+  return 0;
+}
 
 function puedeGestionarCitas(){
   return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller","Asesor de servicio","Control de calidad"].includes(currentUser.rol);
@@ -638,10 +658,15 @@ function renderCitasDia(){
   el.innerHTML = list.map(c=>{
     const tipo = tipoInfo(c.tipo);
     const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
-    // Una cita atrasada (pasó la hora y sigue "pendiente") es más urgente que "cliente espera" —
-    // si se dan ambas a la vez, manda el aviso de atrasada.
-    const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
-    const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : (c.pruebaRuta ? " ruta" : "")));
+    // Una cita en escala de atraso (o "No llegó" marcada a mano) es más urgente que "cliente
+    // espera" — si se dan varias a la vez, manda la más urgente.
+    const nivel = nivelAtrasoCita(c.fechaHora, c.estado, ahora);
+    const claseEstado = c.estado === "convertida" ? " convertida"
+      : c.estado === "no_show" ? " atraso5"
+      : nivel > 0 ? ` atraso${nivel}`
+      : c.clienteEspera ? " espera"
+      : c.pruebaRuta ? " ruta" : "";
+    const mensajeAtraso = c.estado === "no_show" || nivel === 5 ? "⚠ No-Show" : (nivel > 0 ? "⚠ No ha ingresado" : "");
     return `
       <div class="cita-card${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}">
         <div class="cita-hora">${hora}${c.numeroCita ? `<span class="cita-numero">#${escapeHtml(c.numeroCita)}</span>` : ""}</div>
@@ -649,7 +674,7 @@ function renderCitasDia(){
           <div class="cita-cliente">${escapeHtml(c.cliente||"Sin nombre")} ${c.patente?"· "+escapeHtml(c.patente):""}</div>
           <div class="cita-detalle">${escapeHtml(c.modelo||"")} ${c.sucursal?"· "+escapeHtml(c.sucursal):""} ${tipo?"· "+escapeHtml(tipo.label):""}</div>
           ${c.pruebaRuta ? `<span class="cita-chip-ruta">Prueba de ruta</span>` : ""}
-          ${atrasada ? `<span class="cita-chip-atrasada">⚠ No ha ingresado</span>` : ""}
+          ${mensajeAtraso ? `<span class="cita-chip-atrasada">${mensajeAtraso}</span>` : ""}
         </div>
         ${c.unidadCampana ? `<span class="cita-campana" title="Unidad con campaña">C</span>` : ""}
         <span class="cita-estado ${c.estado}">${estadoLabel(c.estado)}</span>
@@ -678,8 +703,12 @@ function renderCitasSemana(){
         ${citasDia.length===0 ? `<div class="citas-empty" style="padding:10px 0;font-size:11px;">Sin citas</div>` : citasDia.map(c=>{
           const tipo = tipoInfo(c.tipo);
           const hora = new Date(c.fechaHora).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
-          const atrasada = c.estado === "pendiente" && (ahora - new Date(c.fechaHora)) > MINUTOS_ATRASO * 60000;
-          const claseEstado = atrasada ? " atrasada" : (c.estado === "convertida" ? " convertida" : (c.clienteEspera ? " espera" : (c.pruebaRuta ? " ruta" : "")));
+          const nivel = nivelAtrasoCita(c.fechaHora, c.estado, ahora);
+          const claseEstado = c.estado === "convertida" ? " convertida"
+            : c.estado === "no_show" ? " atraso5"
+            : nivel > 0 ? ` atraso${nivel}`
+            : c.clienteEspera ? " espera"
+            : c.pruebaRuta ? " ruta" : "";
           return `<div class="cita-mini${claseEstado}" data-id="${c.id}" style="border-left-color:${tipo?"#"+tipo.color:"var(--border-strong)"}"><span class="h">${hora}</span> ${escapeHtml(c.patente||c.cliente||"—")}${c.unidadCampana ? `<span class="cita-campana-mini" title="Unidad con campaña">C</span>` : ""}</div>`;
         }).join("")}
       </div>`;
@@ -1009,6 +1038,23 @@ document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("pwSaveBtn").addEventListener("click", savePassword);
 document.getElementById("newBtn").addEventListener("click", openNew);
+// Avisa mientras se escribe si el número de OT ya existe (en cualquier sucursal) — no bloquea
+// el guardado, solo alerta, por si es un error de tipeo o de verdad ya está esa OT cargada.
+document.getElementById("f_numero").addEventListener("blur", async ()=>{
+  const numero = document.getElementById("f_numero").value.trim();
+  const warning = document.getElementById("numeroDuplicadoWarning");
+  if(!numero){ warning.style.display = "none"; return; }
+  try{
+    const params = new URLSearchParams({ numero, excluirId: editingId || "" });
+    const data = await api(`/api/ots/existe-numero?${params}`);
+    if(data.existe){
+      warning.textContent = `⚠ Ya existe una OT con este número, en ${data.sucursal}${data.etapa ? " ("+data.etapa+")" : ""} — revisa que no sea un error.`;
+      warning.style.display = "block";
+    } else {
+      warning.style.display = "none";
+    }
+  }catch(e){ /* si falla el chequeo, no bloquea nada — se ignora en silencio */ }
+});
 // Solo mientras se está CREANDO una OT (no al editar una ya existente): DyP parte en
 // "Recepción", el resto de los tipos de trabajo parte en "Esperando asignación".
 document.getElementById("f_tipo").addEventListener("change", ()=>{

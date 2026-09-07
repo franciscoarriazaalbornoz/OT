@@ -173,7 +173,7 @@
 <div class="overlay" id="citasExportarOverlay">
   <div class="modal" style="max-width:360px;">
     <h2>Exportar citas</h2>
-    <p style="color:var(--text-2);font-size:13px;margin:-6px 0 16px;">Incluye un resumen de No-Show por mes y sucursal, más el detalle de cada cita.</p>
+    <p style="color:var(--text-2);font-size:13px;margin:-6px 0 16px;">Incluye el % de No-Show por día, semana y mes (cada uno por sucursal), más el detalle de cada cita.</p>
     <div class="field-group" style="display:flex;flex-direction:column;gap:8px;">
       <button class="btn-ghost btn" id="citasExportarDiaBtn" style="width:100%;">Día actual</button>
       <button class="btn-ghost btn" id="citasExportarSemanaBtn" style="width:100%;">Semana actual</button>
@@ -232,7 +232,11 @@
   <div class="modal">
     <h2 id="modalTitle">Nueva OT</h2>
     <div class="form-error" id="formError"></div>
-    <div class="field"><label>Número de OT</label><input id="f_numero" placeholder="Ej: 45213" class="input-upper"></div>
+    <div class="field">
+      <label>Número de OT</label>
+      <input id="f_numero" placeholder="Ej: 45213" class="input-upper">
+      <span class="field-hint" id="numeroDuplicadoWarning" style="display:none;color:#B8143C;font-weight:600;"></span>
+    </div>
     <div class="grid2">
       <div class="field"><label>Patente</label><input id="f_patente" placeholder="AB1234" class="input-upper"></div>
       <div class="field"><label>Fecha ingreso</label><input id="f_fecha" type="date"></div>
@@ -256,6 +260,11 @@
       <label>Técnico que inició el trabajo</label>
       <div class="tecnico-trabajo-readonly" id="tecnicoTrabajoNombre">—</div>
       <span class="field-hint">Uso interno — se completa solo cuando el técnico marca "Inicio de trabajo" desde su celular. Nunca se muestra al cliente ni en la tarjeta del tablero.</span>
+    </div>
+    <div class="field check-lavado-field" id="creadoPorBox" style="display:none;">
+      <label>Creada por</label>
+      <div class="tecnico-trabajo-readonly" id="creadoPorNombre">—</div>
+      <span class="field-hint">Uso interno — quién generó esta OT (a mano, o al convertir una cita). Nunca se muestra al cliente ni en la tarjeta del tablero.</span>
     </div>
     <div class="field check-lavado-field">
       <label class="checkbox-label"><input type="checkbox" id="f_check_ppto_realizado"> Presupuesto realizado</label>
