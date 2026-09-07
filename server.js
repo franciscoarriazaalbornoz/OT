@@ -488,6 +488,21 @@ app.get("/api/ots", requireAuth, async (req, res) => {
   res.json({ ots: rows.map(r => ({ ...rowToOt(r), tieneFotos: conFotos.has(r.id) })) });
 });
 
+// Avisa si un número de OT ya está registrado — para que la app muestre una alerta mientras se
+// está escribiendo, antes de guardar. No expone datos del cliente de otra sucursal, solo si
+// existe y en cuál sucursal quedó, para no filtrar información entre sucursales.
+app.get("/api/ots/existe-numero", requireAuth, async (req, res) => {
+  const numero = String(req.query.numero || "").trim().toUpperCase();
+  const excluirId = String(req.query.excluirId || "");
+  if (!numero) return res.json({ existe: false });
+  const { rows } = await pool.query(
+    "SELECT sucursal, etapa FROM ots WHERE UPPER(numero)=$1 AND id <> $2 LIMIT 1",
+    [numero, excluirId]
+  );
+  if (!rows[0]) return res.json({ existe: false });
+  res.json({ existe: true, sucursal: rows[0].sucursal, etapa: STAGES[rows[0].etapa] || "" });
+});
+
 app.post("/api/ots", requireAuth, async (req, res) => {
   const b = req.body || {};
   if (!b.numero || !String(b.numero).trim()) return res.status(400).json({ error: "Falta el número de OT" });
@@ -1564,27 +1579,47 @@ app.get("/api/citas/exportar-excel", requireAuth, requireAdmin, async (req, res)
     [desde, hasta]
   );
 
-  const mesLabel = (fecha) => {
-    const d = new Date(fecha);
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`;
+  // Todo el agrupamiento se hace en hora de Chile (no UTC) — así una cita de las 23:30 no se
+  // corre al día siguiente en el resumen solo por la diferencia de huso horario.
+  const fmtChile = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" });
+  const partesChile = (fecha) => {
+    const p = fmtChile.formatToParts(new Date(fecha)).reduce((acc, x) => { acc[x.type] = x.value; return acc; }, {});
+    return { year: parseInt(p.year, 10), month: parseInt(p.month, 10), day: parseInt(p.day, 10) };
+  };
+  const diaLabel = (fecha) => { const p = partesChile(fecha); return `${String(p.day).padStart(2,"0")}-${String(p.month).padStart(2,"0")}-${p.year}`; };
+  const mesLabel = (fecha) => { const p = partesChile(fecha); return `${p.year}-${String(p.month).padStart(2,"0")}`; };
+  const semanaLabel = (fecha) => {
+    const p = partesChile(fecha);
+    const d = new Date(Date.UTC(p.year, p.month-1, p.day));
+    const dow = d.getUTCDay();
+    const diffToMonday = (dow===0 ? -6 : 1-dow);
+    const monday = new Date(Date.UTC(p.year, p.month-1, p.day+diffToMonday));
+    return `Semana del ${String(monday.getUTCDate()).padStart(2,"0")}-${String(monday.getUTCMonth()+1).padStart(2,"0")}-${monday.getUTCFullYear()}`;
   };
   const tipoLabel = (v) => (TIPOS_TRABAJO.find(t=>t.value===v) || {}).label || v;
   const estadoLabelMap = { pendiente: "Pendiente", convertida: "Convertida", no_show: "No llegó" };
 
-  // Hoja "Resumen No-Show": una fila por combinación de mes + sucursal, con el total de citas,
-  // cuántas fueron "No llegó" (no_show), y el porcentaje — para comparar sucursales y meses.
-  const resumenMapa = new Map();
-  rows.forEach(r => {
-    const clave = `${mesLabel(r.fecha_hora)}|${r.sucursal}`;
-    if (!resumenMapa.has(clave)) resumenMapa.set(clave, { mes: mesLabel(r.fecha_hora), sucursal: r.sucursal, total: 0, noShow: 0 });
-    const fila = resumenMapa.get(clave);
-    fila.total++;
-    if (r.estado === "no_show") fila.noShow++;
-  });
-  const resumenAoa = [["Mes", "Sucursal", "Total citas", "No llegó", "% No llegó"]];
-  [...resumenMapa.values()].sort((a,b) => a.mes.localeCompare(b.mes) || a.sucursal.localeCompare(b.sucursal)).forEach(f => {
-    resumenAoa.push([f.mes, f.sucursal, f.total, f.noShow, f.total ? `${Math.round((f.noShow/f.total)*1000)/10}%` : "0%"]);
-  });
+  // Construye una hoja de resumen de No-Show agrupada por el período que se le indique
+  // (día, semana o mes) + sucursal, con el total de citas, cuántas fueron "No llegó" y el %.
+  function construirResumen(periodoLabelFn, columnaLabel) {
+    const mapa = new Map();
+    rows.forEach(r => {
+      const periodo = periodoLabelFn(r.fecha_hora);
+      const clave = `${periodo}|${r.sucursal}`;
+      if (!mapa.has(clave)) mapa.set(clave, { periodo, sucursal: r.sucursal, total: 0, noShow: 0 });
+      const fila = mapa.get(clave);
+      fila.total++;
+      if (r.estado === "no_show") fila.noShow++;
+    });
+    const aoa = [[columnaLabel, "Sucursal", "Total citas", "No llegó", "% No llegó"]];
+    [...mapa.values()].sort((a,b) => a.periodo.localeCompare(b.periodo) || a.sucursal.localeCompare(b.sucursal)).forEach(f => {
+      aoa.push([f.periodo, f.sucursal, f.total, f.noShow, f.total ? `${Math.round((f.noShow/f.total)*1000)/10}%` : "0%"]);
+    });
+    return aoa;
+  }
+  const resumenDiaAoa = construirResumen(diaLabel, "Día");
+  const resumenSemanaAoa = construirResumen(semanaLabel, "Semana");
+  const resumenMesAoa = construirResumen(mesLabel, "Mes");
 
   // Hoja "Detalle": una fila por cita.
   const detalleAoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Patente", "Cliente", "Tipo de trabajo", "Estado", "Cliente espera", "Prueba de ruta", "Campaña"]];
@@ -1598,7 +1633,9 @@ app.get("/api/citas/exportar-excel", requireAuth, requireAdmin, async (req, res)
   });
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenAoa), "Resumen No-Show");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenDiaAoa), "Resumen diario");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenSemanaAoa), "Resumen semanal");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumenMesAoa), "Resumen mensual");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalleAoa), "Detalle");
   const buffer2 = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
