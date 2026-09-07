@@ -133,3 +133,9 @@ actualizarReloj();
 setInterval(actualizarReloj, 30000);
 cargar();
 setInterval(cargar, 20000);
+// La pantalla queda encendida sin que nadie la toque — solo pide datos nuevos cada 20s, pero
+// nunca vuelve a cargar el HTML/JS en sí. Si se publica una mejora mientras está prendida, se
+// queda ejecutando la versión vieja indefinidamente. Por eso, cada 3 horas recarga la página
+// completa (un parpadeo breve), así cualquier cambio nuevo llega solo, sin depender de que
+// alguien la refresque a mano.
+setInterval(()=>{ location.reload(); }, 3 * 60 * 60 * 1000);

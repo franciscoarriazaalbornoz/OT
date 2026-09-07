@@ -85,13 +85,15 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .cita-card.espera .cita-hora,
 .cita-card.espera .cita-cliente,
 .cita-card.espera .cita-detalle,
-.cita-card.espera .cita-numero{color:#fff;}
+.cita-card.espera .cita-numero,
+.cita-card.espera .cita-campana{color:#fff;}
 .cita-card.espera .cita-estado.pendiente{background:#fff;color:#B83A00;}
 .cita-card.ruta{background:#1D6FA5;}
 .cita-card.ruta .cita-hora,
 .cita-card.ruta .cita-cliente,
 .cita-card.ruta .cita-detalle,
-.cita-card.ruta .cita-numero{color:#fff;}
+.cita-card.ruta .cita-numero,
+.cita-card.ruta .cita-campana{color:#fff;}
 .cita-card.ruta .cita-estado.pendiente{background:#fff;color:#0A4A7A;}
 .cita-card.atraso1{background:#FBDCDC;}
 .cita-card.atraso2{background:#F5AEAE;}
@@ -110,9 +112,9 @@ select,input,textarea{font-family:var(--sans);font-size:13px;border:1px solid va
 .cita-card.atraso5 .cita-estado.pendiente,
 .cita-card.atraso5 .cita-estado.no_show{background:#fff;color:#8C1D1D;}
 .cita-mini.espera{background:#E8600C;color:#fff;font-weight:700;}
-.cita-mini.espera .h{color:#fff;}
+.cita-mini.espera .h,.cita-mini.espera .cita-campana-mini{color:#fff;}
 .cita-mini.ruta{background:#1D6FA5;color:#fff;font-weight:700;}
-.cita-mini.ruta .h{color:#fff;}
+.cita-mini.ruta .h,.cita-mini.ruta .cita-campana-mini{color:#fff;}
 .cita-mini.atraso1{background:#FBDCDC;}
 .cita-mini.atraso2{background:#F5AEAE;font-weight:700;}
 .cita-mini.atraso3{background:#EC7D7D;color:#fff;font-weight:700;}
