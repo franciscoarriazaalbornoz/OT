@@ -862,6 +862,8 @@ function openReportes(){
   const hace30 = new Date(); hace30.setDate(hace30.getDate()-30);
   document.getElementById("repHasta").value = hoy.toISOString().slice(0,10);
   document.getElementById("repDesde").value = hace30.toISOString().slice(0,10);
+  document.getElementById("comparativaDesde").value = hoy.toISOString().slice(0,10);
+  document.getElementById("comparativaHasta").value = hoy.toISOString().slice(0,10);
   cargarReporte();
 }
 function closeReportes(){
@@ -1116,6 +1118,49 @@ document.getElementById("reportesUsoUsuariosBtn").addEventListener("click", ()=>
 });
 document.getElementById("reportesEtapasSaltadasBtn").addEventListener("click", ()=>{
   window.location.href = "/api/reportes/etapas-saltadas-excel";
+});
+document.getElementById("comparativaAtencionesBtn").addEventListener("click", ()=>document.getElementById("comparativaAtencionesInput").click());
+document.getElementById("comparativaAtencionesInput").addEventListener("change", async (e)=>{
+  const file = e.target.files[0];
+  e.target.value = "";
+  if(!file) return;
+  const msg = document.getElementById("comparativaAtencionesMsg");
+  msg.style.display = "block";
+  msg.className = "sync-msg";
+  const desde = document.getElementById("comparativaDesde").value;
+  const hasta = document.getElementById("comparativaHasta").value;
+  if(!desde || !hasta){
+    msg.className = "sync-msg error";
+    msg.textContent = "Completa las fechas Desde/Hasta antes de subir el archivo.";
+    return;
+  }
+  msg.textContent = "Comparando (puede tardar unos segundos con archivos grandes)...";
+  try{
+    const fileBase64 = await leerArchivoComoBase64(file);
+    const res = await fetch("/api/reportes/comparativa-atenciones-excel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileBase64, desde, hasta })
+    });
+    if(!res.ok){
+      const data = await res.json().catch(()=>({}));
+      throw new Error(data.error || "No se pudo generar la comparativa");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `comparativa-atenciones-${desde}-a-${hasta}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    msg.className = "sync-msg ok";
+    msg.textContent = "Listo — revisa el Excel descargado.";
+  }catch(e){
+    msg.className = "sync-msg error";
+    msg.textContent = e.message;
+  }
 });
 document.getElementById("repBuscarBtn").addEventListener("click", cargarReporte);
 document.getElementById("historialCloseBtn").addEventListener("click", ()=>document.getElementById("historialOverlay").classList.remove("show"));

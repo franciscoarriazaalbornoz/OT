@@ -132,8 +132,15 @@
       <button class="btn-ghost btn" id="reportesUnidadesBtn">Descargar unidades entregadas (Excel)</button>
       <button class="btn-ghost btn" id="reportesUsoUsuariosBtn">Descargar uso por usuario (Excel)</button>
       <button class="btn-ghost btn" id="reportesEtapasSaltadasBtn">Descargar etapas saltadas (Excel)</button>
+      <label class="rep-label" style="margin-left:10px;">Desde</label>
+      <input id="comparativaDesde" type="date">
+      <label class="rep-label">Hasta</label>
+      <input id="comparativaHasta" type="date">
+      <button class="btn-ghost btn" id="comparativaAtencionesBtn">Comparar atenciones (Dynamics)</button>
+      <input type="file" id="comparativaAtencionesInput" accept=".xlsx,.xls" style="display:none;">
       <button class="btn-ghost btn" id="reportesVolverBtn">← Volver al tablero</button>
     </div>
+    <div class="sync-msg" id="comparativaAtencionesMsg" style="display:none;"></div>
   </div>
 
   <div class="filters">

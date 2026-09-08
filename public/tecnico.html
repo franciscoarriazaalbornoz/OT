@@ -32,6 +32,7 @@
   .big-btn{width:100%;padding:16px;font-size:15px;font-weight:700;border-radius:10px;border:1px solid var(--border-strong);background:#fff;cursor:pointer;}
   .big-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent-dark);}
   .big-btn:active{transform:scale(0.98);}
+  .big-btn:disabled{background:#C9C7C1;border-color:#C9C7C1;color:#6b6963;cursor:not-allowed;}
   .msg{text-align:center;font-size:13px;margin-top:14px;min-height:18px;}
   .msg.ok{color:#0F5A38;}
   .msg.error{color:var(--accent);}
@@ -89,6 +90,7 @@
       <button class="big-btn primary" id="inicioTrabajoBtn">▶ Inicio de trabajo</button>
       <div class="lavado-check-hint" id="inicioTrabajoHint" style="display:none;text-align:center;margin:-4px 0 4px;"></div>
       <button class="big-btn primary" id="terminoTrabajoBtn">✓ Término de trabajo</button>
+      <div class="lavado-check-hint" id="terminoTrabajoCountdown" style="display:none;text-align:center;margin:4px 0 4px;color:#B8143C;font-weight:700;"></div>
     </div>
 
     <div class="big-actions" id="genericActions">

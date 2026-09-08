@@ -2,6 +2,7 @@ const otId = location.pathname.split("/t/")[1];
 let ot = null;
 let stages = [];
 let fotos = [];
+let intervaloCuentaRegresiva = null;
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -159,6 +160,7 @@ function render(){
     } else {
       hint.style.display = "none";
     }
+    actualizarBloqueoTermino();
   }
 
   const pills = document.getElementById("stagePills");
@@ -168,6 +170,38 @@ function render(){
   pills.querySelectorAll("[data-stage]").forEach(b=>{
     b.addEventListener("click", ()=> updateStage(parseInt(b.dataset.stage,10)));
   });
+}
+
+// Mínimo 15 minutos entre "Inicio" y "Término de trabajo" — mientras no pasen, el botón queda
+// bloqueado con una cuenta regresiva visible. El servidor valida lo mismo por su cuenta, así que
+// esto es solo para que el técnico vea por qué no puede terminar todavía.
+const MINUTOS_MINIMOS_TRABAJO = 15;
+function actualizarBloqueoTermino(){
+  if(intervaloCuentaRegresiva){ clearInterval(intervaloCuentaRegresiva); intervaloCuentaRegresiva = null; }
+  const btn = document.getElementById("terminoTrabajoBtn");
+  const countdown = document.getElementById("terminoTrabajoCountdown");
+
+  const tick = () => {
+    if(!ot.trabajoIniciadoAt){
+      btn.disabled = false;
+      countdown.style.display = "none";
+      if(intervaloCuentaRegresiva){ clearInterval(intervaloCuentaRegresiva); intervaloCuentaRegresiva = null; }
+      return;
+    }
+    const segundosFaltantes = Math.ceil(MINUTOS_MINIMOS_TRABAJO*60 - (Date.now() - new Date(ot.trabajoIniciadoAt).getTime())/1000);
+    if(segundosFaltantes <= 0){
+      btn.disabled = false;
+      countdown.style.display = "none";
+      if(intervaloCuentaRegresiva){ clearInterval(intervaloCuentaRegresiva); intervaloCuentaRegresiva = null; }
+      return;
+    }
+    btn.disabled = true;
+    const mm = Math.floor(segundosFaltantes/60), ss = segundosFaltantes%60;
+    countdown.textContent = `Disponible en ${mm}:${String(ss).padStart(2,"0")}`;
+    countdown.style.display = "block";
+  };
+  tick();
+  intervaloCuentaRegresiva = setInterval(tick, 1000);
 }
 
 async function updateStage(etapa){
