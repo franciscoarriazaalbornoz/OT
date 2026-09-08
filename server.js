@@ -677,7 +677,9 @@ const HEADER_ALIASES = {
   fir: ["fir"],
   pruebaRuta: ["ruta", "prueba de ruta", "prueba ruta"],
   numeroCita: ["n° cita", "n cita", "nro cita", "numero cita", "número de cita"],
-  unidadCampana: ["unidad con campaña", "unidad con campana", "unidad campaña", "unidad campana", "campaña", "campana"]
+  unidadCampana: ["unidad con campaña", "unidad con campana", "unidad campaña", "unidad campana", "campaña", "campana"],
+  fechaReagenda: ["fecha reagenda"],
+  horaReagenda: ["hora reagenda"]
 };
 
 // Interpreta valores tipo "SI"/"NO" (o variantes) de columnas booleanas del Excel.
@@ -864,12 +866,14 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
     if (typeof rawCliente === "string" && normalizarHeader(rawCliente).includes("sin agendamiento")) continue;
 
     let fechaHoraISO = null;
+    let horaStrOriginal = "09:00";
     if (colMap.fechaHora !== undefined) {
       const d = excelDateToJSDate(get("fechaHora"));
       if (d) fechaHoraISO = d.toISOString();
     } else if (colMap.fecha !== undefined) {
       const fechaD = excelDateToJSDate(get("fecha"));
       const horaStr = colMap.hora !== undefined ? (excelHoraToHHMM(get("hora")) || "09:00") : "09:00";
+      horaStrOriginal = horaStr;
       if (fechaD && horaStr) {
         const [hh, mm] = horaStr.split(":").map(Number);
         const combinado = crearFechaChile(fechaD.getFullYear(), fechaD.getMonth(), fechaD.getDate(), hh, mm);
@@ -883,6 +887,20 @@ function parsearFilasCitas(rows, colMap, sucursalFija) {
       const tienePatente = String(get("patente") || "").trim() !== "";
       if (tieneCliente || tienePatente) errores.push(`Fila ${i+1}: no se pudo interpretar la fecha/hora.`);
       continue;
+    }
+
+    // Si la cita fue reagendada (columnas "Fecha reagenda" / "Hora reagenda"), esa es la fecha
+    // real a usar de aquí en adelante — reemplaza a la fecha original de la cita, tal como
+    // corresponde a una cita que efectivamente se movió a otro día/hora.
+    if (colMap.fechaReagenda !== undefined) {
+      const fechaReagendaD = excelDateToJSDate(get("fechaReagenda"));
+      if (fechaReagendaD) {
+        const horaReagendaStr = colMap.horaReagenda !== undefined
+          ? (excelHoraToHHMM(get("horaReagenda")) || horaStrOriginal || "09:00")
+          : (horaStrOriginal || "09:00");
+        const [hhR, mmR] = horaReagendaStr.split(":").map(Number);
+        fechaHoraISO = crearFechaChile(fechaReagendaD.getFullYear(), fechaReagendaD.getMonth(), fechaReagendaD.getDate(), hhR, mmR).toISOString();
+      }
     }
 
     // Marca + Modelo combinados (ej: "TOYOTA" + "4RUNNER" -> "TOYOTA 4RUNNER").
@@ -953,6 +971,10 @@ function parsearExcelBuffer(buffer, acc) {
     }
 
     if (colMap.fecha !== undefined) corregirFechasAmbiguas(rows, colMap.fecha);
+    // La fecha de reagenda es distinta por cada fila (a diferencia de la fecha del día, que en
+    // "Detalle citas" suele ser una sola para toda la hoja) — necesita su propia corrección de
+    // ambigüedad día/mes, independiente de la columna de fecha principal.
+    if (colMap.fechaReagenda !== undefined) corregirFechasAmbiguas(rows, colMap.fechaReagenda);
 
     const { citas, errores } = parsearFilasCitas(rows, colMap, sucursalFija);
     resultado.citas.push(...citas);
@@ -1281,6 +1303,17 @@ app.put("/api/public/ot/:id/termino-trabajo", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
   const existing = rowToOt(rows[0]);
+  // Mínimo 15 minutos entre "Inicio" y "Término" — evita que se marquen ambos casi juntos sin
+  // trabajo real de por medio. Se valida acá (no solo en el botón deshabilitado del celular) para
+  // que no se pueda saltar llamando la API directo.
+  const MINUTOS_MINIMOS_TRABAJO = 15;
+  if (existing.trabajoIniciadoAt) {
+    const minutosTranscurridos = (Date.now() - new Date(existing.trabajoIniciadoAt).getTime()) / 60000;
+    if (minutosTranscurridos < MINUTOS_MINIMOS_TRABAJO) {
+      const faltan = Math.ceil(MINUTOS_MINIMOS_TRABAJO - minutosTranscurridos);
+      return res.status(400).json({ error: `Deben pasar al menos ${MINUTOS_MINIMOS_TRABAJO} minutos desde el inicio de trabajo — faltan ${faltan} min.` });
+    }
+  }
   const idxControlCalidad = STAGES.indexOf("Control de calidad");
   const { actorNombre } = req.body || {};
   await pool.query("UPDATE ots SET trabajo_terminado_at=now(), etapa=$1, updated_at=now() WHERE id=$2", [idxControlCalidad, req.params.id]);
@@ -1789,6 +1822,154 @@ app.get("/api/reportes/etapas-saltadas-excel", requireAuth, requireAdmin, async 
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="etapas-saltadas-${new Date().toISOString().slice(0,10)}.xlsx"`);
   res.send(buffer3);
+});
+
+// Mapeo de "Grupo de recursos primarios" (el sistema externo, Dynamics) a las sucursales que
+// usa la app. Cualquier otro valor (otras marcas/servicios que no pasan por esta app) se ignora.
+const GRUPO_RECURSOS_A_SUCURSAL = {
+  "st-col": "Summit Colón",
+  "st-ra-toy": "Rancagua",
+  "st-matta": "Matta",
+  "dyp-ra-toy": "Rancagua DyP"
+};
+// "Grupos de órdenes de trabajo" que no corresponden a atención real de cliente en el taller
+// (campañas, garantías, uso interno) — se excluyen de la comparación.
+const GRUPOS_OT_EXCLUIR = ["camtoy", "gartoy", "vinterna", "interno"];
+// Una OT externa terminada en "-1", "-2", "-3" (ej. "OT-0221056-1") es una sub-orden — se excluye,
+// solo se compara la orden principal.
+function esSubordenExcluida(numeroOt) {
+  const partes = String(numeroOt || "").split("-");
+  const ultimo = partes[partes.length - 1];
+  return ["1", "2", "3"].includes(ultimo);
+}
+
+// Excel descargable, solo Administrador: compara la base de atenciones de otro sistema (ej.
+// Dynamics) contra las OT ya registradas en la app, para encontrar unidades atendidas que NUNCA
+// se ingresaron acá — el caso de un cliente sin cita previa, que hoy no queda cubierto por nada.
+app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin, async (req, res) => {
+  const { fileBase64, desde, hasta } = req.body || {};
+  if (!fileBase64) return res.status(400).json({ error: "Falta el archivo" });
+  if (!desde || !hasta) return res.status(400).json({ error: "Faltan las fechas desde/hasta" });
+  // El rango se compara como texto simple (YYYY-MM-DD), sin pasar por zona horaria — la fecha
+  // del archivo externo ya viene como un día de calendario "plano", sin hora real detrás.
+
+  let wbExterno;
+  try {
+    const base64Clean = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
+    wbExterno = XLSX.read(Buffer.from(base64Clean, "base64"), { type: "buffer", cellDates: true });
+  } catch (e) {
+    return res.status(400).json({ error: "No se pudo leer el archivo — ¿es un Excel válido?" });
+  }
+  const sheet = wbExterno.Sheets[wbExterno.SheetNames[0]];
+  const filas = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+  if (filas.length < 2) return res.status(400).json({ error: "El archivo no tiene filas de datos" });
+
+  const colMap = mapearColumnas(filas[0], {
+    otExterna: ["número de la orden de trabajo", "numero de la orden de trabajo"],
+    fecha: ["fecha y hora de creación", "fecha y hora de creacion"],
+    grupoRecursos: ["grupo de recursos primarios"],
+    patente: ["número de registro", "numero de registro"],
+    grupoOt: ["grupo de órdenes de trabajo", "grupo de ordenes de trabajo"],
+    asesor: ["persona responsable"]
+  });
+  const faltantes = ["otExterna","fecha","grupoRecursos","patente","grupoOt","asesor"].filter(c => colMap[c] === undefined);
+  if (faltantes.length > 0) {
+    return res.status(400).json({ error: `No se encontraron algunas columnas esperadas en el archivo: ${faltantes.join(", ")}` });
+  }
+
+  // Aplica las 3 exclusiones (grupo de recursos desconocido, sub-orden, grupo de OT interno) y
+  // arma la lista de atenciones reales a comparar.
+  const atenciones = [];
+  let excluidasPorGrupo = 0, excluidasPorSuborden = 0, excluidasPorGrupoOt = 0, sinPatente = 0;
+  for (let i = 1; i < filas.length; i++) {
+    const row = filas[i];
+    if (!row || row.every(c => c === "" || c === null || c === undefined)) continue;
+    const get = (campo) => row[colMap[campo]];
+
+    const sucursal = GRUPO_RECURSOS_A_SUCURSAL[normalizarHeader(get("grupoRecursos"))];
+    if (!sucursal) { excluidasPorGrupo++; continue; }
+
+    if (esSubordenExcluida(get("otExterna"))) { excluidasPorSuborden++; continue; }
+
+    if (GRUPOS_OT_EXCLUIR.includes(normalizarHeader(get("grupoOt")))) { excluidasPorGrupoOt++; continue; }
+
+    const patente = up(String(get("patente") || "").trim()).replace(/-/g, "");
+    if (!patente) { sinPatente++; continue; }
+
+    const fechaRaw = get("fecha");
+    const fecha = fechaRaw instanceof Date ? fechaRaw : new Date(String(fechaRaw));
+    if (isNaN(fecha.getTime())) continue;
+    // Se compara como día de calendario simple (YYYY-MM-DD), no como instante exacto — evita
+    // cualquier desfase de zona horaria entre cómo se guardó la fecha en el archivo externo y
+    // cómo se armó el rango desde/hasta.
+    const fechaStr = fechaRaw instanceof Date
+      ? `${fecha.getUTCFullYear()}-${String(fecha.getUTCMonth()+1).padStart(2,"0")}-${String(fecha.getUTCDate()).padStart(2,"0")}`
+      : String(fechaRaw).trim().slice(0, 10);
+    if (fechaStr < desde || fechaStr > hasta) continue; // fuera del rango de fechas pedido
+
+    atenciones.push({
+      otExterna: String(get("otExterna") || "").trim(),
+      fecha, sucursal, patente,
+      asesor: String(get("asesor") || "").trim()
+    });
+  }
+
+  // Una sola consulta para traer todas las OT de la app que podrían calzar (por patente), en vez
+  // de una consulta por atención.
+  const patentesUnicas = [...new Set(atenciones.map(a => a.patente))];
+  const { rows: otsPropias } = patentesUnicas.length
+    ? await pool.query("SELECT numero, patente, sucursal, fecha_ingreso FROM ots WHERE REPLACE(UPPER(patente),'-','') = ANY($1::text[])", [patentesUnicas])
+    : { rows: [] };
+  const otsPorPatente = new Map();
+  otsPropias.forEach(o => {
+    const clave = String(o.patente || "").toUpperCase().replace(/-/g, "");
+    if (!otsPorPatente.has(clave)) otsPorPatente.set(clave, []);
+    otsPorPatente.get(clave).push(o);
+  });
+
+  // Se considera "encontrada" si hay una OT propia con la misma patente, la misma sucursal, y una
+  // fecha de ingreso dentro de un margen de 3 días (para tolerar pequeños desfases entre cuándo
+  // se creó en cada sistema) — no exige que sea exactamente el mismo día.
+  const MARGEN_DIAS = 3;
+  const noEncontradas = [];
+  let encontradas = 0;
+  atenciones.forEach(a => {
+    const candidatas = otsPorPatente.get(a.patente) || [];
+    const hayMatch = candidatas.some(o => {
+      if (o.sucursal !== a.sucursal) return false;
+      const diffDias = Math.abs(new Date(o.fecha_ingreso) - a.fecha) / 86400000;
+      return diffDias <= MARGEN_DIAS;
+    });
+    if (hayMatch) encontradas++;
+    else noEncontradas.push(a);
+  });
+
+  // Hoja "Resumen por sucursal".
+  const resumenMapa = new Map();
+  atenciones.forEach(a => {
+    if (!resumenMapa.has(a.sucursal)) resumenMapa.set(a.sucursal, { sucursal: a.sucursal, total: 0, noEncontradas: 0 });
+    resumenMapa.get(a.sucursal).total++;
+  });
+  noEncontradas.forEach(a => { resumenMapa.get(a.sucursal).noEncontradas++; });
+  const resumenAoa = [["Sucursal", "Total atenciones", "No ingresadas a la App", "% no ingresadas"]];
+  [...resumenMapa.values()].sort((a,b) => a.sucursal.localeCompare(b.sucursal)).forEach(f => {
+    resumenAoa.push([f.sucursal, f.total, f.noEncontradas, f.total ? `${Math.round((f.noEncontradas/f.total)*1000)/10}%` : "0%"]);
+  });
+
+  // Hoja "No ingresadas a la App": el detalle a revisar.
+  const detalleAoa = [["Fecha", "Sucursal", "OT (externa)", "Patente", "Asesor"]];
+  noEncontradas.sort((a,b) => a.fecha - b.fecha).forEach(a => {
+    detalleAoa.push([a.fecha.toLocaleDateString("es-CL"), a.sucursal, a.otExterna, a.patente, a.asesor]);
+  });
+
+  const wb4 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb4, XLSX.utils.aoa_to_sheet(resumenAoa), "Resumen por sucursal");
+  XLSX.utils.book_append_sheet(wb4, XLSX.utils.aoa_to_sheet(detalleAoa), "No ingresadas a la App");
+  const buffer4 = XLSX.write(wb4, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="comparativa-atenciones-${desde}-a-${hasta}.xlsx"`);
+  res.send(buffer4);
 });
 
 app.use(express.static(path.join(__dirname, "public")));
