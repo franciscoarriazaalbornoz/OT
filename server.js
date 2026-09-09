@@ -206,9 +206,11 @@ async function initDb() {
       tipo TEXT DEFAULT 'general',
       etapa INTEGER,
       eliminado_por TEXT DEFAULT '',
-      eliminado_en TIMESTAMPTZ DEFAULT now()
+      eliminado_en TIMESTAMPTZ DEFAULT now(),
+      fecha_ingreso DATE
     );
   `);
+  await pool.query(`ALTER TABLE ots_eliminadas ADD COLUMN IF NOT EXISTS fecha_ingreso DATE;`);
   // Foto del usuario justo antes de borrarlo — para que el reporte de uso siga mostrando su
   // rol y sucursal aunque la cuenta ya no exista.
   await pool.query(`
@@ -591,9 +593,9 @@ app.delete("/api/ots/:id", requireAuth, async (req, res) => {
     const ot = rowToOt(existingRows[0]);
     const { rows: urows } = await pool.query("SELECT nombre FROM users WHERE id=$1", [req.session.userId]);
     await pool.query(
-      `INSERT INTO ots_eliminadas (id, ot_id, numero, patente, cliente, sucursal, tipo, etapa, eliminado_por, eliminado_en)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())`,
-      [uid("elim"), ot.id, ot.numero, ot.patente, ot.cliente, ot.sucursal, ot.tipo, ot.etapa, urows[0] ? urows[0].nombre : ""]
+      `INSERT INTO ots_eliminadas (id, ot_id, numero, patente, cliente, sucursal, tipo, etapa, eliminado_por, eliminado_en, fecha_ingreso)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), $10)`,
+      [uid("elim"), ot.id, ot.numero, ot.patente, ot.cliente, ot.sucursal, ot.tipo, ot.etapa, urows[0] ? urows[0].nombre : "", ot.fechaIngreso || null]
     );
   }
   await pool.query("DELETE FROM ots WHERE id=$1", [req.params.id]);
@@ -1914,22 +1916,28 @@ app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin
     });
   }
 
-  // Una sola consulta para traer todas las OT de la app que podrían calzar (por patente), en vez
-  // de una consulta por atención.
+  // Dos consultas para traer todas las OT que podrían calzar (por patente) — tanto las activas
+  // como las que ya se eliminaron (registradas en ots_eliminadas) — en vez de una consulta por
+  // atención. Una OT que se ingresó y después se borró NO debe aparecer como "no ingresada".
   const patentesUnicas = [...new Set(atenciones.map(a => a.patente))];
-  const { rows: otsPropias } = patentesUnicas.length
-    ? await pool.query("SELECT numero, patente, sucursal, fecha_ingreso FROM ots WHERE REPLACE(UPPER(patente),'-','') = ANY($1::text[])", [patentesUnicas])
-    : { rows: [] };
+  const [otsPropias, otsElim] = patentesUnicas.length
+    ? await Promise.all([
+        pool.query("SELECT numero, patente, sucursal, fecha_ingreso, false AS eliminada FROM ots WHERE REPLACE(UPPER(patente),'-','') = ANY($1::text[])", [patentesUnicas]),
+        pool.query("SELECT numero, patente, sucursal, fecha_ingreso, true AS eliminada FROM ots_eliminadas WHERE REPLACE(UPPER(patente),'-','') = ANY($1::text[])", [patentesUnicas])
+      ])
+    : [{ rows: [] }, { rows: [] }];
   const otsPorPatente = new Map();
-  otsPropias.forEach(o => {
+  [...otsPropias.rows, ...otsElim.rows].forEach(o => {
     const clave = String(o.patente || "").toUpperCase().replace(/-/g, "");
     if (!otsPorPatente.has(clave)) otsPorPatente.set(clave, []);
     otsPorPatente.get(clave).push(o);
   });
 
-  // Se considera "encontrada" si hay una OT propia con la misma patente, la misma sucursal, y una
-  // fecha de ingreso dentro de un margen de 3 días (para tolerar pequeños desfases entre cuándo
-  // se creó en cada sistema) — no exige que sea exactamente el mismo día.
+  // Se considera "encontrada" si hay una OT propia (activa o eliminada) con la misma patente y
+  // sucursal, dentro de un margen de 3 días de la fecha de la atención (para tolerar pequeños
+  // desfases entre cuándo se creó en cada sistema). Las OT eliminadas ANTES de este cambio no
+  // tienen fecha de ingreso guardada (fecha_ingreso queda null) — para esas, se acepta con solo
+  // que calce la patente y la sucursal, ya que de todas formas está confirmado que sí se ingresó.
   const MARGEN_DIAS = 3;
   const noEncontradas = [];
   let encontradas = 0;
@@ -1937,6 +1945,7 @@ app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin
     const candidatas = otsPorPatente.get(a.patente) || [];
     const hayMatch = candidatas.some(o => {
       if (o.sucursal !== a.sucursal) return false;
+      if (!o.fecha_ingreso) return true; // OT eliminada antigua, sin fecha guardada — se acepta igual
       const diffDias = Math.abs(new Date(o.fecha_ingreso) - a.fecha) / 86400000;
       return diffDias <= MARGEN_DIAS;
     });
