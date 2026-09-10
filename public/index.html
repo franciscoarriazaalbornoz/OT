@@ -41,6 +41,7 @@
       <button class="btn-ghost btn" id="reportesBtn" style="display:none;">Reportes</button>
       <button class="btn-ghost btn" id="clienteQrBtn">QR para clientes</button>
       <button class="btn-ghost btn" id="tallerQrBtn">QR para taller</button>
+      <button class="btn-ghost btn" id="lavadoQrBtn">QR para lavado</button>
       <button class="btn-ghost btn" id="citasBtn">Citas</button>
       <button class="btn-ghost btn" id="refreshBtn">Actualizar</button>
       <button class="btn btn-primary" id="newBtn">+ Nueva OT</button>
@@ -240,10 +241,13 @@
   <div class="modal">
     <h2 id="modalTitle">Nueva OT</h2>
     <div class="form-error" id="formError"></div>
-    <div class="field">
-      <label>Número de OT</label>
-      <input id="f_numero" placeholder="Ej: 45213" class="input-upper">
-      <span class="field-hint" id="numeroDuplicadoWarning" style="display:none;color:#B8143C;font-weight:600;"></span>
+    <div class="grid2">
+      <div class="field">
+        <label>Número de OT</label>
+        <input id="f_numero" placeholder="Ej: 45213" class="input-upper">
+        <span class="field-hint" id="numeroDuplicadoWarning" style="display:none;color:#B8143C;font-weight:600;"></span>
+      </div>
+      <div class="field"><label>Cono</label><input id="f_cono" placeholder="Ej: A12" class="input-upper" maxlength="4"></div>
     </div>
     <div class="grid2">
       <div class="field"><label>Patente</label><input id="f_patente" placeholder="AB1234" class="input-upper"></div>

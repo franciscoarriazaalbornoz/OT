@@ -7,7 +7,7 @@ let currentUser = null;
 let ots = [];
 let editingId = null;
 
-const STAGE_COLORS = ["#6B7280","#0F8A72","#B08900","#1D6FA5","#EB0A1E","#6B4FA0","#2E8FA6","#1E8A5F"];
+const STAGE_COLORS = ["#6B7280","#0F8A72","#EB0A1E","#B08900","#1D6FA5","#6B4FA0","#2E8FA6","#1E8A5F"];
 function tipoInfo(value){ return TIPOS.find(t=>t.value===value) || null; }
 
 function escapeHtml(s){
@@ -253,7 +253,13 @@ function render(){
       card.innerHTML = `
         <div class="card-top">
           <span class="card-ot">OT ${escapeHtml(o.numero||"—")}</span>
+          ${o.cono ? `<span class="card-cono">Cono: ${escapeHtml(o.cono)}</span>` : ""}
           <span class="card-days${days!==null && days>=5 ? " warn" : ""}">${days!==null ? days+"d" : ""}</span>
+        </div>
+        <div class="card-top-ultra">
+          <span class="card-ot">OT ${escapeHtml(o.numero||"—")}</span>
+          ${o.patente ? `<span class="card-ultra-dato">${escapeHtml(o.patente)}</span>` : ""}
+          ${o.cono ? `<span class="card-ultra-dato">Cono: ${escapeHtml(o.cono)}</span>` : ""}
         </div>
         <div class="card-cliente">${escapeHtml(o.cliente||"Sin cliente")}</div>
         <div class="card-modelo">${escapeHtml(o.modelo||"")} ${o.patente? "· "+escapeHtml(o.patente):""}</div>
@@ -267,6 +273,7 @@ function render(){
         </div>
         <div class="card-foot">
           <span class="card-suc">${escapeHtml(o.sucursal||"—")}</span>
+          <span class="card-suc-ultra">${escapeHtml(o.sucursal||"—")}${days!==null ? " · "+days+"d" : ""}</span>
           <span class="card-move">
             ${idx>0 ? `<button class="mini" data-back="${o.id}" title="Etapa anterior">‹</button>`:""}
             ${idx<STAGES.length-1 ? `<button class="mini" data-fwd="${o.id}" title="Siguiente etapa">›</button>`:""}
@@ -285,7 +292,13 @@ function render(){
 async function moveStage(id, delta){
   const o = ots.find(x=>x.id===id);
   if(!o) return;
-  const nuevaEtapa = Math.min(STAGES.length-1, Math.max(0, o.etapa+delta));
+  let nuevaEtapa = Math.min(STAGES.length-1, Math.max(0, o.etapa+delta));
+  // Si la unidad ya viene con "Lavado OK" marcado de antes (ej. un prelavado hecho antes de que
+  // pasara por el taller) y se avanza desde "Control de calidad", se salta "Lavado" y va directo
+  // a "Entrega" — ya no tiene sentido pasar por una etapa que ya se cumplió.
+  if(delta > 0 && STAGES[o.etapa] === "Control de calidad" && o.checkLavado && STAGES[nuevaEtapa] === "Lavado"){
+    nuevaEtapa = STAGES.indexOf("Entrega");
+  }
   try{
     const data = await api("/api/ots/"+id, { method:"PUT", body:{ etapa: nuevaEtapa } });
     const idx = ots.findIndex(x=>x.id===id);
@@ -300,7 +313,7 @@ function openNew(){
   document.getElementById("deleteBtn").style.display = "none";
   document.getElementById("qrBtn").style.display = "none";
   document.getElementById("formError").style.display = "none";
-  ["f_numero","f_patente","f_cliente","f_modelo","f_responsable","f_notas"].forEach(id=>document.getElementById(id).value="");
+  ["f_numero","f_cono","f_patente","f_cliente","f_modelo","f_responsable","f_notas"].forEach(id=>document.getElementById(id).value="");
   document.getElementById("f_check_lavado").checked = false;
   document.getElementById("f_check_ppto_realizado").checked = false;
   document.getElementById("f_check_ppto_autorizado").checked = false;
@@ -331,6 +344,7 @@ function openEdit(id){
   document.getElementById("qrBtn").style.display = "inline-block";
   document.getElementById("formError").style.display = "none";
   document.getElementById("f_numero").value = o.numero||"";
+  document.getElementById("f_cono").value = o.cono||"";
   document.getElementById("numeroDuplicadoWarning").style.display = "none";
   document.getElementById("f_patente").value = o.patente||"";
   document.getElementById("f_fecha").value = o.fechaIngreso||"";
@@ -391,6 +405,7 @@ async function saveForm(){
 
   const payload = {
     numero,
+    cono: document.getElementById("f_cono").value.trim().slice(0,4),
     patente: document.getElementById("f_patente").value.trim(),
     fechaIngreso: document.getElementById("f_fecha").value,
     fechaEntrega: document.getElementById("f_fecha_entrega").value,
@@ -532,6 +547,14 @@ async function openTallerQr(){
   try{
     const data = await api("/api/qr/taller");
     document.getElementById("qrTitle").textContent = "QR único de taller (técnicos y lavado)";
+    document.getElementById("qrImg").src = data.dataUrl;
+    document.getElementById("qrOverlay").classList.add("show");
+  }catch(e){ alert(e.message); }
+}
+async function openLavadoQr(){
+  try{
+    const data = await api("/api/qr/lavado");
+    document.getElementById("qrTitle").textContent = "QR de lavado (independiente del flujo del taller)";
     document.getElementById("qrImg").src = data.dataUrl;
     document.getElementById("qrOverlay").classList.add("show");
   }catch(e){ alert(e.message); }
@@ -1086,6 +1109,7 @@ document.getElementById("qrCloseBtn").addEventListener("click", ()=>document.get
 document.getElementById("qrPrintBtn").addEventListener("click", printQr);
 document.getElementById("clienteQrBtn").addEventListener("click", openClienteQr);
 document.getElementById("tallerQrBtn").addEventListener("click", openTallerQr);
+document.getElementById("lavadoQrBtn").addEventListener("click", openLavadoQr);
 document.getElementById("addFotoBtn").addEventListener("click", ()=>document.getElementById("fotoInput").click());
 document.getElementById("fotoInput").addEventListener("change", (e)=>{
   const file = e.target.files[0];

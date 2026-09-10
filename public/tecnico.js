@@ -258,7 +258,14 @@ async function toggleCheckLavado(){
 document.getElementById("lavadoCheckInput").addEventListener("change", toggleCheckLavado);
 
 document.getElementById("advanceBtn").addEventListener("click", ()=>{
-  if(ot.etapa < stages.length-1) updateStage(ot.etapa+1);
+  if(ot.etapa >= stages.length-1) return;
+  let siguiente = ot.etapa + 1;
+  // Misma regla que el escritorio: si la unidad ya viene con "Lavado OK" marcado de antes y se
+  // avanza desde "Control de calidad", se salta "Lavado" y va directo a "Entrega".
+  if(stages[ot.etapa] === "Control de calidad" && ot.checkLavado && stages[siguiente] === "Lavado"){
+    siguiente = stages.indexOf("Entrega");
+  }
+  updateStage(siguiente);
 });
 document.getElementById("backBtn").addEventListener("click", ()=>{
   if(ot.etapa > 0) updateStage(ot.etapa-1);
