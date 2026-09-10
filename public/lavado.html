@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Lavado</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body{background:var(--bg-page);}
+  .wrap{max-width:420px;margin:0 auto;padding:20px 16px 60px;}
+  .ot-head{background:var(--bg-header);color:#fff;border-radius:12px;padding:16px;margin-bottom:16px;}
+  .ot-head .num{font-family:var(--mono);font-size:18px;font-weight:800;}
+  .ot-head .cliente{font-size:14px;margin-top:2px;}
+  .ot-head .modelo{font-size:12.5px;color:#cfcdc7;margin-top:2px;}
+  .ot-head .etapa-actual{display:inline-block;margin-top:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,.15);border-radius:12px;padding:3px 10px;}
+
+  .lavado-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center;}
+  .lavado-toggle{display:flex;align-items:center;justify-content:center;gap:12px;cursor:pointer;padding:16px;border-radius:10px;border:2px solid var(--border-strong);}
+  .lavado-toggle input{width:26px;height:26px;}
+  .lavado-toggle span{font-size:16px;font-weight:700;}
+  .lavado-toggle.on{background:#E4F1EA;border-color:#1E8A5F;}
+  .lavado-toggle.on span{color:#0F5A38;}
+  .hint{font-size:12.5px;color:var(--text-2);margin-top:14px;line-height:1.4;}
+  .msg{text-align:center;font-size:13px;margin-top:12px;}
+  .msg.ok{color:#0F5A38;font-weight:700;}
+  .msg.error{color:var(--accent);}
+  .volver{display:block;text-align:center;margin-top:20px;font-size:13px;color:var(--text-2);}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap" style="display:none;">
+  <div class="ot-head">
+    <div class="num" id="otNum"></div>
+    <div class="cliente" id="otCliente"></div>
+    <div class="modelo" id="otModelo"></div>
+    <div class="etapa-actual" id="otEtapa"></div>
+  </div>
+
+  <div class="lavado-box">
+    <label class="lavado-toggle" id="lavadoToggle">
+      <input type="checkbox" id="lavadoInput">
+      <span id="lavadoLabel">✓ Lavado OK</span>
+    </label>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <p class="hint">Esto marca el lavado como listo, sin importar en qué etapa esté la OT — ideal para un prelavado, antes de que entre a taller.</p>
+  <a class="volver" href="/lavado">← Buscar otra patente u OT</a>
+</div>
+<div class="wrap" id="loadingWrap"><p style="text-align:center;color:var(--text-2);">Cargando...</p></div>
+<script src="/lavado.js"></script>
+</body>
+</html>
