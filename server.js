@@ -17,7 +17,7 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL.includes('sslmode=disable') ? false : { rejectUnauthorized: false }
 });
 
-const STAGES = ["Recepción","Esperando asignación","Presupuesto/Aprobación","Repuestos","En trabajo","Control de calidad","Lavado","Entrega"];
+const STAGES = ["Recepción","Esperando asignación","En trabajo","Presupuesto/Aprobación","Repuestos","Control de calidad","Lavado","Entrega"];
 const SUCURSALES = ["Summit Colón","Rancagua","Matta","Antofagasta","Calama"];
 // "Rancagua DyP" es un valor de sucursal SOLO para OT — no es un local aparte con citas o
 // usuarios propios. Comparte la agenda de Citas y los usuarios de "Rancagua".
@@ -61,6 +61,7 @@ function rowToOt(r) {
     checkPptoAutorizado: r.check_ppto_autorizado === true,
     trabajoIniciadoAt: r.trabajo_iniciado_at ? new Date(r.trabajo_iniciado_at).toISOString() : null,
     tecnicoTrabajo: r.tecnico_trabajo || "",
+    cono: r.cono || "",
     trabajoTerminadoAt: r.trabajo_terminado_at ? new Date(r.trabajo_terminado_at).toISOString() : null,
     notas: r.notas || "", creadoPor: r.creado_por || "",
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : ""
@@ -132,6 +133,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS check_ppto_autorizado BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS trabajo_iniciado_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS tecnico_trabajo TEXT;`);
+  await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS cono TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE ots ADD COLUMN IF NOT EXISTS trabajo_terminado_at TIMESTAMPTZ;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
@@ -255,6 +257,22 @@ async function initDb() {
     const migradas = await pool.query("UPDATE ots SET etapa=4 WHERE etapa=1");
     await pool.query("INSERT INTO app_settings (key, value) VALUES ('migracion_etapas_v1', 'ok') ON CONFLICT (key) DO NOTHING");
     if (migradas.rowCount > 0) console.log(`Migración de etapas: ${migradas.rowCount} OT movidas de Diagnóstico a En trabajo.`);
+  }
+
+  // Migración de una sola vez por el segundo rediseño: "En trabajo" se mueve de la posición 4 a
+  // la posición 2 (justo después de "Esperando asignación"), y "Presupuesto/Aprobación" y
+  // "Repuestos" se corren un lugar hacia atrás (2→3, 3→4). Es una permutación cíclica entre las
+  // posiciones 2, 3 y 4 — se resuelve en una sola sentencia con CASE para no pisar valores a
+  // medio camino. Recepción(0), Esperando asignación(1), Control de calidad(5), Lavado(6) y
+  // Entrega(7) no cambian de posición. Misma lógica de marca en app_settings que la migración
+  // anterior, para que no se repita en cada reinicio del servidor.
+  const { rows: yaMigradoV2 } = await pool.query("SELECT value FROM app_settings WHERE key='migracion_etapas_v2'");
+  if (!yaMigradoV2[0]) {
+    const migradasV2 = await pool.query(
+      "UPDATE ots SET etapa = CASE etapa WHEN 2 THEN 3 WHEN 3 THEN 4 WHEN 4 THEN 2 ELSE etapa END WHERE etapa IN (2,3,4)"
+    );
+    await pool.query("INSERT INTO app_settings (key, value) VALUES ('migracion_etapas_v2', 'ok') ON CONFLICT (key) DO NOTHING");
+    if (migradasV2.rowCount > 0) console.log(`Migración de etapas v2: ${migradasV2.rowCount} OT reordenadas (En trabajo pasa a la posición 2).`);
   }
 }
 
@@ -527,12 +545,12 @@ app.post("/api/ots", requireAuth, async (req, res) => {
     ? (b.sucursal || SUCURSALES_OT[0])
     : (acc.sucursalesAccesibles.includes(b.sucursal) ? b.sucursal : acc.sucursal);
   await pool.query(
-    `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, tipo, notas, creado_por, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`,
+    `INSERT INTO ots (id, numero, patente, fecha_ingreso, fecha_entrega, cliente, modelo, sucursal, etapa, responsable, prioridad, tipo, notas, creado_por, cono, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())`,
     [id, up(String(b.numero).trim()), up(b.patente) || "", fecha, b.fechaEntrega || null, up(b.cliente) || "", up(b.modelo) || "",
      sucursalFinal, etapa, up(b.responsable) || "", b.prioridad === "alta" ? "alta" : "normal",
      tipoFinal,
-     up(b.notas) || "", user ? user.nombre : ""]
+     up(b.notas) || "", user ? user.nombre : "", up(String(b.cono || "").trim()).slice(0, 4)]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [id]);
   await logCambioEtapa(id, null, etapa, user ? user.nombre : "", "creacion");
@@ -565,12 +583,12 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
   await pool.query(
     `UPDATE ots SET numero=$1, patente=$2, fecha_ingreso=$3, fecha_entrega=$4, cliente=$5, modelo=$6, sucursal=$7,
      etapa=$8, responsable=$9, prioridad=$10, tipo=$11, notas=$12, check_lavado=$13,
-     check_ppto_realizado=$14, check_ppto_autorizado=$15, updated_at=now() WHERE id=$16`,
+     check_ppto_realizado=$14, check_ppto_autorizado=$15, cono=$16, updated_at=now() WHERE id=$17`,
     [up(merged.numero), up(merged.patente), merged.fechaIngreso || null, merged.fechaEntrega || null, up(merged.cliente), up(merged.modelo),
      merged.sucursal, merged.etapa, up(merged.responsable), merged.prioridad,
      TIPOS_TRABAJO.some(t=>t.value===merged.tipo) ? merged.tipo : "general",
      up(merged.notas), merged.checkLavado === true,
-     merged.checkPptoRealizado === true, merged.checkPptoAutorizado === true, req.params.id]
+     merged.checkPptoRealizado === true, merged.checkPptoAutorizado === true, up(String(merged.cono || "").trim()).slice(0, 4), req.params.id]
   );
   const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (merged.etapa !== existing.etapa) {
@@ -1386,9 +1404,20 @@ app.get("/api/public/buscar", async (req, res) => {
 });
 
 app.get("/taller", (req, res) => { res.sendFile(path.join(__dirname, "public", "buscar.html")); });
+app.get("/lavado", (req, res) => { res.sendFile(path.join(__dirname, "public", "buscar_lavado.html")); });
 
 app.get("/api/qr/taller", requireAuth, async (req, res) => {
   const url = `${req.protocol}://${req.get("host")}/taller`;
+  try {
+    const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 280 });
+    res.json({ dataUrl, url });
+  } catch (e) {
+    res.status(500).json({ error: "No se pudo generar el código QR" });
+  }
+});
+
+app.get("/api/qr/lavado", requireAuth, async (req, res) => {
+  const url = `${req.protocol}://${req.get("host")}/lavado`;
   try {
     const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 280 });
     res.json({ dataUrl, url });
@@ -1443,6 +1472,7 @@ app.get("/api/public/pantalla", async (req, res) => {
 app.get("/consulta", (req, res) => { res.sendFile(path.join(__dirname, "public", "consulta.html")); });
 
 app.get("/t/:id", (req, res) => { res.sendFile(path.join(__dirname, "public", "tecnico.html")); });
+app.get("/l/:id", (req, res) => { res.sendFile(path.join(__dirname, "public", "lavado.html")); });
 
 // --- Reportes (solo Administrador) ---
 app.get("/api/reportes/tiempos", requireAuth, requireAdmin, async (req, res) => {
