@@ -69,12 +69,10 @@ async function deleteFoto(fotoId){
 async function loadRoster(){
   const sel = document.getElementById("actorSelect");
   const seleccionActual = sel.value;
-  // La sucursal ya está definida por la OT. El rol esperado depende de la etapa:
-  // en "Lavado" se muestra solo a los lavadores; en cualquier otra etapa, solo a los técnicos.
-  const rolFiltro = stages[ot.etapa] === "Lavado" ? "Lavado y entrega" : "Mecánico";
+  // Esta pantalla ahora es solo para técnicos (el lavado tiene su propio QR independiente).
   let roster = [];
   try{
-    const params = new URLSearchParams({ sucursal: ot.sucursal || "", rol: rolFiltro });
+    const params = new URLSearchParams({ sucursal: ot.sucursal || "", rol: "Mecánico" });
     const rosterRes = await fetch(`/api/public/roster?${params.toString()}`);
     const rosterData = await rosterRes.json();
     roster = rosterData.roster || [];
@@ -99,7 +97,11 @@ async function load(){
     const savedActor = sessionStorage.getItem("ot-actor-nombre");
     await loadRoster();
     const sel = document.getElementById("actorSelect");
-    if(savedActor) sel.value = savedActor;
+    // Si el trabajo ya está iniciado, se muestra a quien lo inició (así, al volver a buscar la
+    // misma patente/OT para finalizar, aparece solo su nombre) — esto manda por sobre el último
+    // nombre usado en este celular.
+    if(ot.trabajoIniciadoAt && ot.tecnicoTrabajo) sel.value = ot.tecnicoTrabajo;
+    else if(savedActor) sel.value = savedActor;
     sel.addEventListener("change", ()=> sessionStorage.setItem("ot-actor-nombre", sel.value));
 
     render();
@@ -118,13 +120,6 @@ function render(){
   document.getElementById("v_modelo").textContent = [ot.modelo, ot.patente].filter(Boolean).join(" · ");
   document.getElementById("v_etapa").textContent = stages[ot.etapa];
 
-  const lavadoBox = document.getElementById("lavadoCheckBox");
-  const esEtapaLavado = stages[ot.etapa] === "Lavado";
-  lavadoBox.style.display = esEtapaLavado ? "block" : "none";
-  if(esEtapaLavado){
-    document.getElementById("lavadoCheckInput").checked = !!ot.checkLavado;
-  }
-
   const pptoBox = document.getElementById("pptoCheckBox");
   const esEtapaPpto = stages[ot.etapa] === "Presupuesto/Aprobación";
   pptoBox.style.display = esEtapaPpto ? "block" : "none";
@@ -137,39 +132,20 @@ function render(){
     document.getElementById("pptoAutorizadoLabel").parentElement.className = "ppto-status-row" + (autorizadoOn ? " on" : "");
   }
 
-  document.getElementById("backBtn").disabled = ot.etapa === 0;
-  document.getElementById("advanceBtn").disabled = ot.etapa === stages.length - 1;
-  document.getElementById("advanceBtn").textContent = ot.etapa === stages.length - 1
-    ? "Ya está en la última etapa"
-    : `Avanzar a: ${stages[ot.etapa+1]} →`;
-
-  // Flujo simplificado para el mecánico: en vez de las flechas genéricas, dos botones claros
-  // juntos mientras la OT está en "En trabajo".
-  const nombreEtapa = stages[ot.etapa];
-  const esReparacion = nombreEtapa === "En trabajo";
-  const trabajoBox = document.getElementById("trabajoBox");
-  const genericActions = document.getElementById("genericActions");
-  trabajoBox.style.display = esReparacion ? "flex" : "none";
-  genericActions.style.display = esReparacion ? "none" : "flex";
-  if(esReparacion){
-    const hint = document.getElementById("inicioTrabajoHint");
-    if(ot.trabajoIniciadoAt){
-      const hora = new Date(ot.trabajoIniciadoAt).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
-      hint.textContent = "Iniciado a las " + hora;
-      hint.style.display = "block";
-    } else {
-      hint.style.display = "none";
-    }
+  // Esta pantalla ya no depende de en qué etapa esté la OT — solo importa si el trabajo está
+  // iniciado o no, para saber cuál de los 2 botones mostrar.
+  const yaIniciado = !!ot.trabajoIniciadoAt;
+  document.getElementById("inicioTrabajoBtn").style.display = yaIniciado ? "none" : "block";
+  document.getElementById("terminoTrabajoBtn").style.display = yaIniciado ? "block" : "none";
+  const hint = document.getElementById("inicioTrabajoHint");
+  if(yaIniciado){
+    const hora = new Date(ot.trabajoIniciadoAt).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+    hint.textContent = "Iniciado a las " + hora;
+    hint.style.display = "block";
     actualizarBloqueoTermino();
+  } else {
+    hint.style.display = "none";
   }
-
-  const pills = document.getElementById("stagePills");
-  pills.innerHTML = stages.map((s,i)=>`
-    <button class="stage-pill${i===ot.etapa? " active":""}" data-stage="${i}">${escapeHtml(s)}</button>
-  `).join("");
-  pills.querySelectorAll("[data-stage]").forEach(b=>{
-    b.addEventListener("click", ()=> updateStage(parseInt(b.dataset.stage,10)));
-  });
 }
 
 // Mínimo 15 minutos entre "Inicio" y "Término de trabajo" — mientras no pasen, el botón queda
@@ -204,72 +180,9 @@ function actualizarBloqueoTermino(){
   intervaloCuentaRegresiva = setInterval(tick, 1000);
 }
 
-async function updateStage(etapa){
-  const msg = document.getElementById("msg");
-  const actor = document.getElementById("actorSelect").value;
-  if(!actor){
-    msg.textContent = "Selecciona tu nombre antes de continuar.";
-    msg.className = "msg error";
-    return;
-  }
-  msg.textContent = "Guardando...";
-  msg.className = "msg";
-  try{
-    const res = await fetch(`/api/public/ot/${otId}/stage`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ etapa, actorNombre: actor })
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || "No se pudo guardar");
-    ot = data.ot; stages = data.stages;
-    render();
-    await loadRoster();
-    msg.textContent = "Actualizado ✓";
-    msg.className = "msg ok";
-  }catch(e){
-    msg.textContent = e.message;
-    msg.className = "msg error";
-  }
-}
-
-async function toggleCheckLavado(){
-  const msg = document.getElementById("msg");
-  const checked = document.getElementById("lavadoCheckInput").checked;
-  try{
-    const res = await fetch(`/api/public/ot/${otId}/check-lavado`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: checked })
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || "No se pudo guardar");
-    ot = data.ot;
-    msg.textContent = checked ? "Marcado ✓" : "Desmarcado";
-    msg.className = "msg ok";
-  }catch(e){
-    document.getElementById("lavadoCheckInput").checked = !checked;
-    msg.textContent = e.message;
-    msg.className = "msg error";
-  }
-}
 // Nota: el check de presupuesto es solo de consulta en esta pantalla — no editable desde el QR.
+// Nota: el check de lavado ya no vive acá — tiene su propio QR independiente (/lavado).
 
-document.getElementById("lavadoCheckInput").addEventListener("change", toggleCheckLavado);
-
-document.getElementById("advanceBtn").addEventListener("click", ()=>{
-  if(ot.etapa >= stages.length-1) return;
-  let siguiente = ot.etapa + 1;
-  // Misma regla que el escritorio: si la unidad ya viene con "Lavado OK" marcado de antes y se
-  // avanza desde "Control de calidad", se salta "Lavado" y va directo a "Entrega".
-  if(stages[ot.etapa] === "Control de calidad" && ot.checkLavado && stages[siguiente] === "Lavado"){
-    siguiente = stages.indexOf("Entrega");
-  }
-  updateStage(siguiente);
-});
-document.getElementById("backBtn").addEventListener("click", ()=>{
-  if(ot.etapa > 0) updateStage(ot.etapa-1);
-});
 document.getElementById("inicioTrabajoBtn").addEventListener("click", async ()=>{
   const msg = document.getElementById("msg");
   const actor = document.getElementById("actorSelect").value;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>OT — Actualizar etapa</title>
+<title>OT — Inicio/Término de trabajo</title>
 <link rel="stylesheet" href="/styles.css">
 <style>
   body{background:var(--bg-page);}
@@ -61,14 +61,6 @@
       <div class="value" id="v_etapa"></div>
     </div>
 
-    <div class="lavado-check-box" id="lavadoCheckBox" style="display:none;">
-      <label class="lavado-check-label">
-        <input type="checkbox" id="lavadoCheckInput">
-        <span>Check OK de lavado</span>
-      </label>
-      <div class="lavado-check-hint">Uso interno del taller — el cliente nunca ve esto.</div>
-    </div>
-
     <div class="lavado-check-box" id="pptoCheckBox" style="display:none;">
       <div class="ppto-status-row">
         <span class="ppto-status-dot" id="pptoRealizadoDot"></span>
@@ -86,21 +78,11 @@
       <select id="actorSelect"><option value="">Selecciona tu nombre</option></select>
     </div>
 
-    <div class="big-actions" id="trabajoBox" style="display:none;">
-      <button class="big-btn primary" id="inicioTrabajoBtn">▶ Inicio de trabajo</button>
+    <div class="big-actions" id="trabajoBox">
+      <button class="big-btn primary" id="inicioTrabajoBtn">▶ Dar inicio</button>
       <div class="lavado-check-hint" id="inicioTrabajoHint" style="display:none;text-align:center;margin:-4px 0 4px;"></div>
-      <button class="big-btn primary" id="terminoTrabajoBtn">✓ Término de trabajo</button>
+      <button class="big-btn primary" id="terminoTrabajoBtn" style="display:none;">✓ Finalizar trabajo</button>
       <div class="lavado-check-hint" id="terminoTrabajoCountdown" style="display:none;text-align:center;margin:4px 0 4px;color:#B8143C;font-weight:700;"></div>
-    </div>
-
-    <div class="big-actions" id="genericActions">
-      <button class="big-btn primary" id="advanceBtn">Avanzar a la siguiente etapa →</button>
-      <button class="big-btn" id="backBtn">← Volver a la etapa anterior</button>
-    </div>
-
-    <div class="stage-list">
-      <div class="label">O selecciona la etapa directamente</div>
-      <div id="stagePills"></div>
     </div>
 
     <div class="who" style="margin-top:18px;">
