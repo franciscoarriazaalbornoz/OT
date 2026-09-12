@@ -1311,10 +1311,21 @@ app.put("/api/public/ot/:id/check-lavado", async (req, res) => {
 });
 
 app.put("/api/public/ot/:id/inicio-trabajo", async (req, res) => {
-  const { rows } = await pool.query("SELECT id FROM ots WHERE id=$1", [req.params.id]);
+  const { rows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Esta OT ya no existe o fue eliminada" });
+  const existing = rowToOt(rows[0]);
   const { actorNombre } = req.body || {};
-  await pool.query("UPDATE ots SET trabajo_iniciado_at=now(), trabajo_terminado_at=NULL, tecnico_trabajo=$1 WHERE id=$2", [actorNombre || "", req.params.id]);
+  // El QR del técnico ahora es independiente de en qué etapa esté la OT — al dar inicio, la
+  // etapa salta directo a "En trabajo" si todavía no estaba ahí (así el técnico no tiene que
+  // preocuparse de mover la OT a mano antes de partir).
+  const idxEnTrabajo = STAGES.indexOf("En trabajo");
+  await pool.query(
+    "UPDATE ots SET trabajo_iniciado_at=now(), trabajo_terminado_at=NULL, tecnico_trabajo=$1, etapa=$2, updated_at=now() WHERE id=$3",
+    [actorNombre || "", idxEnTrabajo, req.params.id]
+  );
+  if (idxEnTrabajo !== existing.etapa) {
+    await logCambioEtapa(req.params.id, existing.etapa, idxEnTrabajo, actorNombre || "", "tecnico");
+  }
   const { rows: updated } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   res.json({ ot: rowToOt(updated[0]) });
 });
