@@ -127,42 +127,51 @@
   <div class="topbar">
     <div>
       <h1>Reportes — tiempos por etapa</h1>
-      <div class="sub">Solo visible para el rol Administrador</div>
+      <div class="sub" id="reportesSub">Solo visible para el rol Administrador</div>
     </div>
     <div class="topbar-controls">
-      <button class="btn-ghost btn" id="reportesUnidadesBtn">Descargar unidades entregadas (Excel)</button>
-      <button class="btn-ghost btn" id="reportesUsoUsuariosBtn">Descargar uso por usuario (Excel)</button>
-      <button class="btn-ghost btn" id="reportesEtapasSaltadasBtn">Descargar etapas saltadas (Excel)</button>
+      <div id="reportesAdminSoloControls" style="display:contents;">
+        <button class="btn-ghost btn" id="reportesUnidadesBtn">Descargar unidades entregadas (Excel)</button>
+        <button class="btn-ghost btn" id="reportesUsoUsuariosBtn">Descargar uso por usuario (Excel)</button>
+        <button class="btn-ghost btn" id="reportesEtapasSaltadasBtn">Descargar etapas saltadas (Excel)</button>
+        <label class="rep-label" style="margin-left:10px;">Desde</label>
+        <input id="comparativaDesde" type="date">
+        <label class="rep-label">Hasta</label>
+        <input id="comparativaHasta" type="date">
+        <button class="btn-ghost btn" id="comparativaAtencionesBtn">Comparar atenciones (Dynamics)</button>
+        <input type="file" id="comparativaAtencionesInput" accept=".xlsx,.xls" style="display:none;">
+      </div>
       <label class="rep-label" style="margin-left:10px;">Desde</label>
-      <input id="comparativaDesde" type="date">
+      <input id="noShowDesde" type="date">
       <label class="rep-label">Hasta</label>
-      <input id="comparativaHasta" type="date">
-      <button class="btn-ghost btn" id="comparativaAtencionesBtn">Comparar atenciones (Dynamics)</button>
-      <input type="file" id="comparativaAtencionesInput" accept=".xlsx,.xls" style="display:none;">
+      <input id="noShowHasta" type="date">
+      <button class="btn-ghost btn" id="noShowExcelBtn">Descargar No-Show (Excel)</button>
       <button class="btn-ghost btn" id="reportesVolverBtn">← Volver al tablero</button>
     </div>
     <div class="sync-msg" id="comparativaAtencionesMsg" style="display:none;"></div>
   </div>
 
-  <div class="filters">
-    <label class="rep-label">Desde</label>
-    <input id="repDesde" type="date">
-    <label class="rep-label">Hasta</label>
-    <input id="repHasta" type="date">
-    <select id="repSucursal"><option value="">Todas las sucursales</option></select>
-    <button class="btn btn-primary" id="repBuscarBtn">Buscar</button>
-  </div>
+  <div id="reportesEtapasBloque">
+    <div class="filters" id="reportesEtapasFilters">
+      <label class="rep-label">Desde</label>
+      <input id="repDesde" type="date">
+      <label class="rep-label">Hasta</label>
+      <input id="repHasta" type="date">
+      <select id="repSucursal"><option value="">Todas las sucursales</option></select>
+      <button class="btn btn-primary" id="repBuscarBtn">Buscar</button>
+    </div>
 
-  <div class="rep-summary" id="repSummary"></div>
+    <div class="rep-summary" id="repSummary"></div>
 
-  <div class="rep-section">
-    <h3>Tiempo promedio por etapa</h3>
-    <table class="rep-table" id="repTablaEtapas"></table>
-  </div>
+    <div class="rep-section">
+      <h3>Tiempo promedio por etapa</h3>
+      <table class="rep-table" id="repTablaEtapas"></table>
+    </div>
 
-  <div class="rep-section">
-    <h3>Detalle por OT</h3>
-    <table class="rep-table" id="repTablaOts"></table>
+    <div class="rep-section">
+      <h3>Detalle por OT</h3>
+      <table class="rep-table" id="repTablaOts"></table>
+    </div>
   </div>
 </div>
 
@@ -250,7 +259,11 @@
       <div class="field"><label>Cono</label><input id="f_cono" placeholder="Ej: A12" class="input-upper" maxlength="4"></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Patente</label><input id="f_patente" placeholder="AB1234" class="input-upper"></div>
+      <div class="field">
+        <label>Patente</label>
+        <input id="f_patente" placeholder="AB1234" class="input-upper">
+        <span class="field-hint" id="patenteDuplicadaWarning" style="display:none;color:#B8143C;font-weight:600;"></span>
+      </div>
       <div class="field"><label>Fecha ingreso</label><input id="f_fecha" type="date"></div>
     </div>
     <div class="field"><label>Cliente</label><input id="f_cliente" placeholder="Nombre del cliente" class="input-upper"></div>

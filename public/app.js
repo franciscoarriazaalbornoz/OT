@@ -97,7 +97,7 @@ async function savePassword(){
 function enterApp(){
   document.getElementById("userInfo").textContent = `${currentUser.nombre} · ${currentUser.rol}${currentUser.sucursal ? " · "+currentUser.sucursal : ""}`;
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
-  document.getElementById("reportesBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
+  document.getElementById("reportesBtn").style.display = (currentUser.rol === "Administrador" || currentUser.rol === "Contact Center") ? "inline-block" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasBtn").style.display = ["Mecánico","Lavado y entrega"].includes(currentUser.rol) ? "none" : "inline-block";
   document.getElementById("newBtn").style.display = currentUser.rol === "Contact Center" ? "none" : "inline-block";
@@ -419,7 +419,8 @@ async function saveForm(){
     notas: document.getElementById("f_notas").value.trim(),
     checkLavado: document.getElementById("f_check_lavado").checked,
     checkPptoRealizado: document.getElementById("f_check_ppto_realizado").checked,
-    checkPptoAutorizado: document.getElementById("f_check_ppto_autorizado").checked
+    checkPptoAutorizado: document.getElementById("f_check_ppto_autorizado").checked,
+    desdeCitaId: pendingCitaId || undefined
   };
 
   try{
@@ -881,13 +882,21 @@ let repDetalleCache = [];
 function openReportes(){
   document.getElementById("appScreen").style.display = "none";
   document.getElementById("reportesScreen").style.display = "block";
+  const esAdmin = currentUser.rol === "Administrador";
+  document.getElementById("reportesAdminSoloControls").style.display = esAdmin ? "contents" : "none";
+  document.getElementById("reportesEtapasBloque").style.display = esAdmin ? "block" : "none";
   const hoy = new Date();
   const hace30 = new Date(); hace30.setDate(hace30.getDate()-30);
-  document.getElementById("repHasta").value = hoy.toISOString().slice(0,10);
-  document.getElementById("repDesde").value = hace30.toISOString().slice(0,10);
-  document.getElementById("comparativaDesde").value = hoy.toISOString().slice(0,10);
-  document.getElementById("comparativaHasta").value = hoy.toISOString().slice(0,10);
-  cargarReporte();
+  document.getElementById("noShowDesde").value = hace30.toISOString().slice(0,10);
+  document.getElementById("noShowHasta").value = hoy.toISOString().slice(0,10);
+  document.getElementById("reportesSub").textContent = esAdmin ? "Solo visible para el rol Administrador" : "Reporte de No-Show — Administrador y Contact Center";
+  if(esAdmin){
+    document.getElementById("repHasta").value = hoy.toISOString().slice(0,10);
+    document.getElementById("repDesde").value = hace30.toISOString().slice(0,10);
+    document.getElementById("comparativaDesde").value = hoy.toISOString().slice(0,10);
+    document.getElementById("comparativaHasta").value = hoy.toISOString().slice(0,10);
+    cargarReporte();
+  }
 }
 function closeReportes(){
   document.getElementById("reportesScreen").style.display = "none";
@@ -1080,6 +1089,23 @@ document.getElementById("f_numero").addEventListener("blur", async ()=>{
     }
   }catch(e){ /* si falla el chequeo, no bloquea nada — se ignora en silencio */ }
 });
+// Avisa mientras se escribe si la patente ya tiene una OT abierta (no en Entrega) — el número
+// de esa OT es el mismo con el que se identifica la unidad en Dynamics.
+document.getElementById("f_patente").addEventListener("blur", async ()=>{
+  const patente = document.getElementById("f_patente").value.trim();
+  const warning = document.getElementById("patenteDuplicadaWarning");
+  if(!patente){ warning.style.display = "none"; return; }
+  try{
+    const params = new URLSearchParams({ patente, excluirId: editingId || "" });
+    const data = await api(`/api/ots/existe-patente?${params}`);
+    if(data.existe){
+      warning.textContent = `⚠ Esta patente ya tiene una OT abierta: OT ${data.numero}, en ${data.sucursal} (${data.etapa}) — revisa que no sea un error.`;
+      warning.style.display = "block";
+    } else {
+      warning.style.display = "none";
+    }
+  }catch(e){ /* si falla el chequeo, no bloquea nada — se ignora en silencio */ }
+});
 // Solo mientras se está CREANDO una OT (no al editar una ya existente): DyP parte en
 // "Recepción", el resto de los tipos de trabajo parte en "Esperando asignación".
 document.getElementById("f_tipo").addEventListener("change", ()=>{
@@ -1144,6 +1170,12 @@ document.getElementById("reportesEtapasSaltadasBtn").addEventListener("click", (
   window.location.href = "/api/reportes/etapas-saltadas-excel";
 });
 document.getElementById("comparativaAtencionesBtn").addEventListener("click", ()=>document.getElementById("comparativaAtencionesInput").click());
+document.getElementById("noShowExcelBtn").addEventListener("click", ()=>{
+  const desde = document.getElementById("noShowDesde").value;
+  const hasta = document.getElementById("noShowHasta").value;
+  if(!desde || !hasta){ alert("Completa las fechas Desde/Hasta."); return; }
+  window.location.href = `/api/reportes/no-show-excel?desde=${desde}&hasta=${hasta}`;
+});
 document.getElementById("comparativaAtencionesInput").addEventListener("change", async (e)=>{
   const file = e.target.files[0];
   e.target.value = "";
