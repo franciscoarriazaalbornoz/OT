@@ -300,6 +300,16 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+// Para el reporte de No-Show: además de Administrador, Contact Center también puede descargarlo
+// (es de solo lectura en todo lo demás, pero este reporte puntual sí lo necesita).
+async function requireAdminOContactCenter(req, res, next) {
+  const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
+  if (!rows[0] || (rows[0].rol !== "Administrador" && rows[0].rol !== "Contact Center")) {
+    return res.status(403).json({ error: "Solo Administrador o Contact Center" });
+  }
+  next();
+}
+
 // Devuelve { rol, sucursal, isAdmin } del usuario autenticado, o null si no existe.
 // La sucursal asignada al usuario es mandante: define qué OT puede ver/tocar (salvo Administrador, que ve todo).
 async function currentUserAccess(req) {
@@ -523,6 +533,23 @@ app.get("/api/ots/existe-numero", requireAuth, async (req, res) => {
   res.json({ existe: true, sucursal: rows[0].sucursal, etapa: STAGES[rows[0].etapa] || "" });
 });
 
+// Avisa si la patente ya tiene una OT ABIERTA (no en "Entrega") — para evitar crear una segunda
+// OT para la misma unidad por error. El número de la OT que ya existe es, en la práctica, el
+// mismo número con el que se identifica esa unidad en Dynamics (el equipo usa la misma
+// numeración en ambos sistemas), así que mostrarlo ya responde "en qué OT de Dynamics" está.
+app.get("/api/ots/existe-patente", requireAuth, async (req, res) => {
+  const patente = up(String(req.query.patente || "").trim()).replace(/-/g, "");
+  const excluirId = String(req.query.excluirId || "");
+  if (!patente) return res.json({ existe: false });
+  const idxEntrega = STAGES.indexOf("Entrega");
+  const { rows } = await pool.query(
+    "SELECT numero, sucursal, etapa FROM ots WHERE REPLACE(UPPER(patente),'-','')=$1 AND etapa <> $2 AND id <> $3 LIMIT 1",
+    [patente, idxEntrega, excluirId]
+  );
+  if (!rows[0]) return res.json({ existe: false });
+  res.json({ existe: true, numero: rows[0].numero, sucursal: rows[0].sucursal, etapa: STAGES[rows[0].etapa] || "" });
+});
+
 app.post("/api/ots", requireAuth, async (req, res) => {
   const b = req.body || {};
   if (!b.numero || !String(b.numero).trim()) return res.status(400).json({ error: "Falta el número de OT" });
@@ -532,6 +559,27 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   const { rows: urows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   const user = urows[0] ? rowToUser(urows[0]) : null;
   const id = uid("ot");
+
+  // Si la patente tiene una cita pendiente agendada para HOY, la única forma de crear la OT es
+  // convirtiendo esa cita (botón "Convertir en OT") — así no se pierde el número de cita ni el
+  // resto de los datos que trae la cita, y no quedan dos caminos distintos para la misma unidad.
+  // El flujo de conversión manda "desdeCitaId" para saltarse este bloqueo.
+  const patenteNormNueva = up(String(b.patente || "").trim()).replace(/-/g, "");
+  if (patenteNormNueva && !b.desdeCitaId) {
+    const ahora = new Date();
+    const fmtHoy = new Intl.DateTimeFormat("en-US", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" });
+    const partesHoy = fmtHoy.formatToParts(ahora).reduce((acc2, p) => { acc2[p.type] = p.value; return acc2; }, {});
+    const inicioHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 0, 0);
+    const finHoy = crearFechaChile(parseInt(partesHoy.year, 10), parseInt(partesHoy.month, 10) - 1, parseInt(partesHoy.day, 10), 23, 59);
+    const { rows: citaHoyRows } = await pool.query(
+      "SELECT id FROM citas WHERE REPLACE(UPPER(patente),'-','')=$1 AND estado='pendiente' AND fecha_hora >= $2 AND fecha_hora <= $3 LIMIT 1",
+      [patenteNormNueva, inicioHoy, finHoy]
+    );
+    if (citaHoyRows[0]) {
+      return res.status(400).json({ error: "Esta patente tiene una cita agendada para hoy — conviértela desde Citas en vez de crear la OT directamente.", citaId: citaHoyRows[0].id });
+    }
+  }
+
   const tipoFinal = TIPOS_TRABAJO.some(t=>t.value===b.tipo) ? b.tipo : "general";
   // Al crear la OT, si no se indica una etapa a propósito: DyP queda en "Recepción" (posición 0);
   // el resto de los tipos de trabajo parte directo en "Esperando asignación" (posición 1).
@@ -2022,12 +2070,61 @@ app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin
   res.send(buffer4);
 });
 
+// Excel descargable, Administrador o Contact Center: el detalle de citas "No llegó" en un rango
+// de fechas, con el mismo esquema de columnas que se usa para CARGAR el Excel de citas a la app
+// (Detalle citas) — así se puede reimportar, cruzar o reconciliar fuera de la app sin tener que
+// adaptar nada. Rut y Descripción quedan vacías: la app no las guarda tal cual las trae el Excel
+// original (Descripción se traduce a un tipo de trabajo interno al importar, y Rut no se guarda).
+app.get("/api/reportes/no-show-excel", requireAuth, requireAdminOContactCenter, async (req, res) => {
+  const { desde, hasta } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
+  const { rows } = await pool.query(
+    "SELECT * FROM citas WHERE estado='no_show' AND fecha_hora >= $1 AND fecha_hora < $2::date + interval '1 day' ORDER BY sucursal, fecha_hora",
+    [desde, hasta]
+  );
+  const si = (v) => v ? "SI" : "NO";
+  const aoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Cliente", "Rut", "Marca/Modelo", "PPU", "Fono", "Descripción", "Lo espera", "FIR", "Ruta", "Campaña"]];
+  rows.forEach(c => {
+    const f = new Date(c.fecha_hora);
+    aoa.push([
+      f.toLocaleDateString("es-CL"), f.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }),
+      c.sucursal, c.numero_cita || "", c.cliente || "", "", c.modelo || "", c.patente || "", c.telefono || "",
+      "", si(c.cliente_espera), si(c.tipo === "fir"), si(c.prueba_ruta), si(c.unidad_campana)
+    ]);
+  });
+  const wb5 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb5, XLSX.utils.aoa_to_sheet(aoa), "No-Show");
+  const buffer5 = XLSX.write(wb5, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="no-show-${desde.slice(0,10)}-a-${hasta.slice(0,10)}.xlsx"`);
+  res.send(buffer5);
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 3000;
+// Cada cierto tiempo, revisa si hay citas "pendiente" que ya pasaron 3 horas de su hora agendada
+// y las marca "no_show" — así el % de No-Show en los reportes refleja la realidad, sin depender
+// de que alguien las marque a mano. El color rojo a las 2 horas (en pantalla) es solo un aviso
+// visual anticipado; esto es el cambio de estado real, más conservador (3 horas), para no cerrar
+// una cita de golpe si el cliente todavía puede llegar con bastante atraso.
+async function marcarNoShowAutomatico() {
+  try {
+    const { rowCount } = await pool.query(
+      "UPDATE citas SET estado='no_show' WHERE estado='pendiente' AND fecha_hora < now() - interval '3 hours'"
+    );
+    if (rowCount > 0) console.log(`No-Show automático: ${rowCount} cita(s) marcada(s) tras 3 horas sin llegar.`);
+  } catch (e) {
+    console.error("Error marcando No-Show automático:", e.message);
+  }
+}
+
 initDb()
   .then(() => {
     app.listen(PORT, () => console.log(`Seguimiento de OT corriendo en el puerto ${PORT}`));
+    marcarNoShowAutomatico();
+    setInterval(marcarNoShowAutomatico, 10 * 60 * 1000); // cada 10 minutos
   })
   .catch(err => {
     console.error("No se pudo inicializar la base de datos:", err.message);
