@@ -28,11 +28,11 @@ const SUCURSALES_OT = [...SUCURSALES, "Rancagua DyP"];
 function sucursalesAccesibles(sucUsuario) {
   return sucUsuario === "Rancagua" ? ["Rancagua", "Rancagua DyP"] : [sucUsuario];
 }
-const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Administrador","Contact Center"];
+const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Torre de control","Administrador","Contact Center"];
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
-const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Repuestos"];
+const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Torre de control", "Repuestos"];
 // Solo estos roles pueden ver y gestionar Citas previas (Administrador siempre puede).
-const ROLES_CITAS = ["Recepción", "Jefe de taller", "Asesor de servicio", "Control de calidad"];
+const ROLES_CITAS = ["Recepción", "Jefe de taller", "Torre de control", "Asesor de servicio", "Control de calidad"];
 const TIPOS_TRABAJO = [
   { value: "mantencion", label: "Mantención", color: "EB0A1E" },
   { value: "general", label: "Trabajo general", color: "E8B400" },
@@ -516,6 +516,57 @@ app.get("/api/ots", requireAuth, async (req, res) => {
   const conFotos = new Set(fotoCounts.filter(f => f.n > 0).map(f => f.ot_id));
 
   res.json({ ots: rows.map(r => ({ ...rowToOt(r), tieneFotos: conFotos.has(r.id) })) });
+});
+
+// Excel descargable del tablero de OT tal como se está viendo — mismos filtros de sucursal,
+// prioridad, tipo y búsqueda que el tablero en pantalla, para poder cotejar lo publicado. Solo
+// para los roles que necesitan auditar el tablero completo (más allá de mirar la pantalla).
+app.get("/api/ots/exportar-excel", requireAuth, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  if (!acc) return res.status(401).json({ error: "No autenticado" });
+  if (!["Jefe de taller", "Torre de control", "Administrador"].includes(acc.rol)) {
+    return res.status(403).json({ error: "Tu rol no tiene acceso a exportar el tablero." });
+  }
+  const { rows } = acc.veTodasSucursales
+    ? await pool.query("SELECT * FROM ots ORDER BY sucursal, etapa, updated_at DESC")
+    : await pool.query("SELECT * FROM ots WHERE sucursal = ANY($1::text[]) ORDER BY etapa, updated_at DESC", [acc.sucursalesAccesibles]);
+
+  const { sucursal, prioridad, tipo, busqueda } = req.query;
+  const busquedaNorm = String(busqueda || "").trim().toUpperCase().replace(/-/g, "");
+  const otsFiltradas = rows.map(rowToOt).filter(o => {
+    if (sucursal && o.sucursal !== sucursal) return false;
+    if (prioridad && o.prioridad !== prioridad) return false;
+    if (tipo && o.tipo !== tipo) return false;
+    if (busquedaNorm) {
+      const patenteNorm = (o.patente || "").toUpperCase().replace(/-/g, "");
+      const numeroNorm = (o.numero || "").toUpperCase();
+      if (!patenteNorm.includes(busquedaNorm) && !numeroNorm.includes(busquedaNorm)) return false;
+    }
+    return true;
+  });
+
+  const tipoLabel = (v) => (TIPOS_TRABAJO.find(t => t.value === v) || {}).label || v;
+  const diasEnTaller = (fechaIngreso) => {
+    if (!fechaIngreso) return "";
+    const d = new Date(String(fechaIngreso).slice(0,10) + "T00:00:00");
+    return Math.floor((Date.now() - d.getTime()) / 86400000);
+  };
+  const aoa = [["Etapa", "N° OT", "Cono", "Cliente", "Patente", "Modelo", "Tipo de trabajo", "Sucursal", "Prioridad", "Días en taller", "Presupuesto OK", "Lavado OK", "Fecha de entrega"]];
+  otsFiltradas.forEach(o => {
+    aoa.push([
+      STAGES[o.etapa] || "", o.numero || "", o.cono || "", o.cliente || "", o.patente || "", o.modelo || "",
+      tipoLabel(o.tipo), o.sucursal || "", o.prioridad === "alta" ? "Alta" : "Normal", diasEnTaller(o.fechaIngreso),
+      o.checkPptoAutorizado ? "SI" : (o.checkPptoRealizado ? "Realizado" : "NO"), o.checkLavado ? "SI" : "NO",
+      o.fechaEntrega ? new Date(o.fechaEntrega).toLocaleString("es-CL") : ""
+    ]);
+  });
+  const wb6 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb6, XLSX.utils.aoa_to_sheet(aoa), "Tablero de OT");
+  const buffer6 = XLSX.write(wb6, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="tablero-ot-${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.send(buffer6);
 });
 
 // Avisa si un número de OT ya está registrado — para que la app muestre una alerta mientras se
