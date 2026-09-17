@@ -98,6 +98,8 @@ function enterApp(){
   document.getElementById("userInfo").textContent = `${currentUser.nombre} · ${currentUser.rol}${currentUser.sucursal ? " · "+currentUser.sucursal : ""}`;
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("reportesBtn").style.display = (currentUser.rol === "Administrador" || currentUser.rol === "Contact Center") ? "inline-block" : "none";
+  const puedeBuscarExportar = ["Jefe de taller", "Torre de control", "Administrador"].includes(currentUser.rol);
+  document.getElementById("buscadorTableroBox").style.display = puedeBuscarExportar ? "flex" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasBtn").style.display = ["Mecánico","Lavado y entrega"].includes(currentUser.rol) ? "none" : "inline-block";
   document.getElementById("newBtn").style.display = currentUser.rol === "Contact Center" ? "none" : "inline-block";
@@ -214,7 +216,19 @@ function filteredOTs(){
   const suc = document.getElementById("filterSucursal").value;
   const pri = document.getElementById("filterPrioridad").value;
   const tipo = document.getElementById("filterTipo").value;
-  return ots.filter(o => (!suc || o.sucursal===suc) && (!pri || o.prioridad===pri) && (!tipo || o.tipo===tipo));
+  const busquedaEl = document.getElementById("filterBusqueda");
+  const busqueda = busquedaEl ? busquedaEl.value.trim().toUpperCase().replace(/-/g, "") : "";
+  return ots.filter(o => {
+    if(suc && o.sucursal!==suc) return false;
+    if(pri && o.prioridad!==pri) return false;
+    if(tipo && o.tipo!==tipo) return false;
+    if(busqueda){
+      const patenteNorm = (o.patente||"").toUpperCase().replace(/-/g, "");
+      const numeroNorm = (o.numero||"").toUpperCase();
+      if(!patenteNorm.includes(busqueda) && !numeroNorm.includes(busqueda)) return false;
+    }
+    return true;
+  });
 }
 
 function render(){
@@ -317,7 +331,7 @@ function openNew(){
   document.getElementById("f_check_lavado").checked = false;
   document.getElementById("f_check_ppto_realizado").checked = false;
   document.getElementById("f_check_ppto_autorizado").checked = false;
-  const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Repuestos"].includes(currentUser.rol);
+  const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Torre de control","Repuestos"].includes(currentUser.rol);
   document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
   document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
   document.getElementById("tecnicoTrabajoBox").style.display = "none";
@@ -362,7 +376,7 @@ function openEdit(id){
   document.getElementById("f_check_ppto_realizado").checked = !!o.checkPptoRealizado;
   document.getElementById("f_check_ppto_autorizado").checked = !!o.checkPptoAutorizado;
   {
-    const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Repuestos"].includes(currentUser.rol);
+    const puedePpto = currentUser.rol === "Administrador" || ["Asesor de servicio","Jefe de taller","Torre de control","Repuestos"].includes(currentUser.rol);
     document.getElementById("f_check_ppto_realizado").disabled = !puedePpto;
     document.getElementById("f_check_ppto_autorizado").disabled = !puedePpto;
   }
@@ -622,7 +636,7 @@ function nivelAtrasoCita(fechaHora, estado, ahora){
 }
 
 function puedeGestionarCitas(){
-  return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller","Asesor de servicio","Control de calidad"].includes(currentUser.rol);
+  return currentUser.rol === "Administrador" || ["Recepción","Jefe de taller","Torre de control","Asesor de servicio","Control de calidad"].includes(currentUser.rol);
 }
 
 function openCitas(){
@@ -1120,6 +1134,16 @@ document.getElementById("refreshBtn").addEventListener("click", loadOTs);
 document.getElementById("filterSucursal").addEventListener("change", render);
 document.getElementById("filterPrioridad").addEventListener("change", render);
 document.getElementById("filterTipo").addEventListener("change", render);
+document.getElementById("filterBusqueda").addEventListener("input", render);
+document.getElementById("exportarTableroBtn").addEventListener("click", ()=>{
+  const params = new URLSearchParams({
+    sucursal: document.getElementById("filterSucursal").value,
+    prioridad: document.getElementById("filterPrioridad").value,
+    tipo: document.getElementById("filterTipo").value,
+    busqueda: document.getElementById("filterBusqueda").value.trim()
+  });
+  window.location.href = `/api/ots/exportar-excel?${params}`;
+});
 document.getElementById("logoutBtn").addEventListener("click", async ()=>{ await api("/api/logout", {method:"POST"}); location.reload(); });
 document.getElementById("usersBtn").addEventListener("click", openUsers);
 document.getElementById("usersCloseBtn").addEventListener("click", ()=>document.getElementById("usersOverlay").classList.remove("show"));
