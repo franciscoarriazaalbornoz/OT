@@ -551,10 +551,18 @@ app.get("/api/ots/exportar-excel", requireAuth, async (req, res) => {
     const d = new Date(String(fechaIngreso).slice(0,10) + "T00:00:00");
     return Math.floor((Date.now() - d.getTime()) / 86400000);
   };
-  const aoa = [["Etapa", "N° OT", "Cono", "Cliente", "Patente", "Modelo", "Tipo de trabajo", "Sucursal", "Prioridad", "Días en taller", "Presupuesto OK", "Lavado OK", "Fecha de entrega"]];
+  // Formato "OT-0" + los últimos 6 dígitos — para que calce con la numeración de Dynamics y sea
+  // más fácil de ordenar/cruzar en Excel. Si el número tiene menos de 6 dígitos (una OT creada a
+  // mano, ej. "45213"), se rellena con ceros a la izquierda en vez de dejarlo corto.
+  const otFormatoDynamics = (numero) => {
+    const digitos = String(numero || "").replace(/\D/g, "");
+    if (!digitos) return "";
+    return "OT-0" + digitos.slice(-6).padStart(6, "0");
+  };
+  const aoa = [["Etapa", "N° OT", "N° OT Dynamics", "Cono", "Cliente", "Patente", "Modelo", "Tipo de trabajo", "Sucursal", "Prioridad", "Días en taller", "Presupuesto OK", "Lavado OK", "Fecha de entrega"]];
   otsFiltradas.forEach(o => {
     aoa.push([
-      STAGES[o.etapa] || "", o.numero || "", o.cono || "", o.cliente || "", o.patente || "", o.modelo || "",
+      STAGES[o.etapa] || "", o.numero || "", otFormatoDynamics(o.numero), o.cono || "", o.cliente || "", o.patente || "", o.modelo || "",
       tipoLabel(o.tipo), o.sucursal || "", o.prioridad === "alta" ? "Alta" : "Normal", diasEnTaller(o.fechaIngreso),
       o.checkPptoAutorizado ? "SI" : (o.checkPptoRealizado ? "Realizado" : "NO"), o.checkLavado ? "SI" : "NO",
       o.fechaEntrega ? new Date(o.fechaEntrega).toLocaleString("es-CL") : ""
