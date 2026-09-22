@@ -28,7 +28,7 @@ const SUCURSALES_OT = [...SUCURSALES, "Rancagua DyP"];
 function sucursalesAccesibles(sucUsuario) {
   return sucUsuario === "Rancagua" ? ["Rancagua", "Rancagua DyP"] : [sucUsuario];
 }
-const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Torre de control","Administrador","Contact Center"];
+const ROLES = ["Recepción","Asesor de servicio","Mecánico","Repuestos","Control de calidad","Lavado y entrega","Jefe de taller","Torre de control","Administrador","Contact Center","Visita"];
 // Solo estos roles pueden marcar/desmarcar el check de presupuesto (Administrador siempre puede, por diseño general de la app).
 const ROLES_PPTO = ["Asesor de servicio", "Jefe de taller", "Torre de control", "Repuestos"];
 // Solo estos roles pueden ver y gestionar Citas previas (Administrador siempre puede).
@@ -304,8 +304,23 @@ async function requireAdmin(req, res, next) {
 // (es de solo lectura en todo lo demás, pero este reporte puntual sí lo necesita).
 async function requireAdminOContactCenter(req, res, next) {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
-  if (!rows[0] || (rows[0].rol !== "Administrador" && rows[0].rol !== "Contact Center")) {
+  // TEMPORAL: Jefe de taller queda pausado por ahora en este reporte también (se activa esta
+  // noche, junto con el resto del despliegue de reportes por sucursal).
+  if (!rows[0] || !["Administrador", "Contact Center"].includes(rows[0].rol)) {
     return res.status(403).json({ error: "Solo Administrador o Contact Center" });
+  }
+  next();
+}
+
+// Para los 6 reportes: además de Administrador (que ve todas las sucursales), Jefe de taller
+// también puede descargarlos — pero cada uno queda acotado a su propia sucursal (el filtrado
+// real va dentro de cada endpoint, usando currentUserAccess; esto solo controla quién entra).
+// TEMPORAL: la parte de Jefe de taller queda pausada por ahora (se activa esta noche, junto con
+// el resto del despliegue) — de momento solo Administrador pasa.
+async function requireAdminOJefeTaller(req, res, next) {
+  const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
+  if (!rows[0] || rows[0].rol !== "Administrador") {
+    return res.status(403).json({ error: "Solo Administrador" });
   }
   next();
 }
@@ -321,7 +336,7 @@ async function currentUserAccess(req) {
   // en cada endpoint de escritura).
   return {
     rol: rows[0].rol, sucursal: rows[0].sucursal, isAdmin: rows[0].rol === "Administrador",
-    veTodasSucursales: rows[0].rol === "Administrador" || rows[0].rol === "Contact Center",
+    veTodasSucursales: rows[0].rol === "Administrador" || rows[0].rol === "Contact Center" || rows[0].rol === "Visita",
     sucursalesAccesibles: sucursalesAccesibles(rows[0].sucursal)
   };
 }
@@ -614,7 +629,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
   if (!b.numero || !String(b.numero).trim()) return res.status(400).json({ error: "Falta el número de OT" });
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
-  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes crear ni modificar OT." });
+  if (["Contact Center","Visita"].includes(acc.rol)) return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes crear ni modificar OT." });
   const { rows: urows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
   const user = urows[0] ? rowToUser(urows[0]) : null;
   const id = uid("ot");
@@ -668,7 +683,7 @@ app.post("/api/ots", requireAuth, async (req, res) => {
 app.put("/api/ots/:id", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
-  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes crear ni modificar OT." });
+  if (["Contact Center","Visita"].includes(acc.rol)) return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes crear ni modificar OT." });
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (!existingRows[0]) return res.status(404).json({ error: "OT no encontrada" });
   const existing = rowToOt(existingRows[0]);
@@ -709,7 +724,7 @@ app.put("/api/ots/:id", requireAuth, async (req, res) => {
 app.delete("/api/ots/:id", requireAuth, async (req, res) => {
   const acc = await currentUserAccess(req);
   if (!acc) return res.status(401).json({ error: "No autenticado" });
-  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes eliminar OT." });
+  if (["Contact Center","Visita"].includes(acc.rol)) return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes eliminar OT." });
   const { rows: existingRows } = await pool.query("SELECT * FROM ots WHERE id=$1", [req.params.id]);
   if (existingRows[0] && !acc.isAdmin && !acc.sucursalesAccesibles.includes(existingRows[0].sucursal)) {
     return res.status(403).json({ error: "Esta OT pertenece a otra sucursal — no tienes acceso a ella" });
@@ -747,7 +762,7 @@ app.post("/api/ots/:id/fotos", requireAuth, async (req, res) => {
   const denied = await checkOtAccess(req, req.params.id);
   if (denied) return res.status(denied.status).json({ error: denied.error });
   const acc = await currentUserAccess(req);
-  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes subir fotos." });
+  if (["Contact Center","Visita"].includes(acc.rol)) return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes subir fotos." });
   const { dataUrl } = req.body || {};
   if (!dataUrl) return res.status(400).json({ error: "Falta la imagen" });
   if ((await contarFotos(req.params.id)) >= 4) return res.status(400).json({ error: "Ya hay 4 fotos en esta OT (máximo permitido)" });
@@ -764,7 +779,7 @@ app.delete("/api/ots/:id/fotos/:fotoId", requireAuth, async (req, res) => {
   const denied = await checkOtAccess(req, req.params.id);
   if (denied) return res.status(denied.status).json({ error: denied.error });
   const acc = await currentUserAccess(req);
-  if (acc.rol === "Contact Center") return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes eliminar fotos." });
+  if (["Contact Center","Visita"].includes(acc.rol)) return res.status(403).json({ error: "Tu perfil es de solo lectura — no puedes eliminar fotos." });
   await pool.query("DELETE FROM ot_fotos WHERE id=$1 AND ot_id=$2", [req.params.fotoId, req.params.id]);
   res.json({ ok: true });
 });
@@ -1593,15 +1608,22 @@ app.get("/t/:id", (req, res) => { res.sendFile(path.join(__dirname, "public", "t
 app.get("/l/:id", (req, res) => { res.sendFile(path.join(__dirname, "public", "lavado.html")); });
 
 // --- Reportes (solo Administrador) ---
-app.get("/api/reportes/tiempos", requireAuth, requireAdmin, async (req, res) => {
+app.get("/api/reportes/tiempos", requireAuth, requireAdminOJefeTaller, async (req, res) => {
+  const acc = await currentUserAccess(req);
   const desde = req.query.desde || "2000-01-01";
   const hastaRaw = req.query.hasta;
   const hasta = hastaRaw ? new Date(new Date(hastaRaw).getTime() + 86400000).toISOString() : new Date(9999,0,1).toISOString();
-  const sucursal = req.query.sucursal || "";
+  // Si no es Administrador, se ignora lo que venga en la URL y se fuerza su(s) propia(s)
+  // sucursal(es) — así no se puede pedir el reporte de otra sucursal cambiando el parámetro a
+  // mano. Ojo: una persona puede tener más de una sucursal accesible (ej. Rancagua + Rancagua
+  // DyP), así que se filtra con una lista, no con un solo valor.
+  const sucursalesFiltro = acc.veTodasSucursales
+    ? (req.query.sucursal ? [req.query.sucursal] : null)
+    : acc.sucursalesAccesibles;
 
   const { rows: otRows } = await pool.query(
-    `SELECT * FROM ots WHERE fecha_ingreso >= $1 AND fecha_ingreso < $2 ${sucursal ? "AND sucursal=$3" : ""}`,
-    sucursal ? [desde, hasta, sucursal] : [desde, hasta]
+    `SELECT * FROM ots WHERE fecha_ingreso >= $1 AND fecha_ingreso < $2 ${sucursalesFiltro ? "AND sucursal = ANY($3::text[])" : ""}`,
+    sucursalesFiltro ? [desde, hasta, sucursalesFiltro] : [desde, hasta]
   );
   const otIds = otRows.map(r => r.id);
   let histRows = [];
@@ -1662,8 +1684,11 @@ app.get("/api/reportes/tiempos", requireAuth, requireAdmin, async (req, res) => 
 // Excel descargable, solo Administrador: unidades atendidas por mes y tipo de trabajo.
 // Se arma desde la tabla independiente unidades_entregadas — sigue existiendo aunque la OT
 // original ya se haya borrado del tablero.
-app.get("/api/reportes/unidades-excel", requireAuth, requireAdmin, async (req, res) => {
-  const { rows } = await pool.query("SELECT * FROM unidades_entregadas ORDER BY fecha_entrega");
+app.get("/api/reportes/unidades-excel", requireAuth, requireAdminOJefeTaller, async (req, res) => {
+  const acc = await currentUserAccess(req);
+  const { rows } = acc.veTodasSucursales
+    ? await pool.query("SELECT * FROM unidades_entregadas ORDER BY fecha_entrega")
+    : await pool.query("SELECT * FROM unidades_entregadas WHERE sucursal = ANY($1::text[]) ORDER BY fecha_entrega", [acc.sucursalesAccesibles]);
 
   const mesLabel = (fecha) => {
     const d = new Date(fecha);
@@ -1729,7 +1754,9 @@ app.get("/api/reportes/unidades-excel", requireAuth, requireAdmin, async (req, r
   });
 
   // Hoja "OT eliminadas": auditoría de quién borró qué y cuándo — sobrevive aunque la OT ya no exista.
-  const { rows: eliminadasRows } = await pool.query("SELECT * FROM ots_eliminadas ORDER BY eliminado_en DESC");
+  const { rows: eliminadasRows } = acc.veTodasSucursales
+    ? await pool.query("SELECT * FROM ots_eliminadas ORDER BY eliminado_en DESC")
+    : await pool.query("SELECT * FROM ots_eliminadas WHERE sucursal = ANY($1::text[]) ORDER BY eliminado_en DESC", [acc.sucursalesAccesibles]);
   const eliminadasAoa = [["N° OT", "Patente", "Cliente", "Sucursal", "Tipo de trabajo", "Etapa al momento de borrar", "Eliminado por", "Fecha de eliminación"]];
   eliminadasRows.forEach(r => {
     eliminadasAoa.push([
@@ -1831,16 +1858,32 @@ app.get("/api/citas/exportar-excel", requireAuth, requireAdmin, async (req, res)
 // Se arma juntando 5 fuentes que YA guardan el nombre como texto plano (no como enlace a la
 // cuenta), así que la actividad de alguien sigue apareciendo aunque después se borre su usuario
 // — para esos casos se usa la "foto" guardada en usuarios_eliminados.
-app.get("/api/reportes/uso-usuarios-excel", requireAuth, requireAdmin, async (req, res) => {
+app.get("/api/reportes/uso-usuarios-excel", requireAuth, requireAdminOJefeTaller, async (req, res) => {
+  const acc = await currentUserAccess(req);
   const limpiarNombre = (n) => String(n || "").replace(/\s*\(Excel\)\s*$/i, "").trim();
+  // Si no es Administrador, cada consulta se acota a su(s) sucursal(es) — etapa_historial no
+  // guarda la sucursal directamente, así que para esa se cruza con la tabla ots.
+  const suc = acc.veTodasSucursales ? null : acc.sucursalesAccesibles;
 
   const [cambiosEtapa, otCreadas, entregasTecnico, citasCreadas, otEliminadas, tiemposTrabajo] = await Promise.all([
-    pool.query("SELECT actor AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM etapa_historial WHERE actor <> '' GROUP BY actor"),
-    pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(updated_at) AS ultima FROM ots WHERE creado_por <> '' GROUP BY creado_por"),
-    pool.query("SELECT tecnico AS nombre, COUNT(*)::int AS n, MAX(fecha_entrega) AS ultima FROM unidades_entregadas WHERE tecnico <> '' GROUP BY tecnico"),
-    pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM citas WHERE creado_por <> '' GROUP BY creado_por"),
-    pool.query("SELECT eliminado_por AS nombre, COUNT(*)::int AS n, MAX(eliminado_en) AS ultima FROM ots_eliminadas WHERE eliminado_por <> '' GROUP BY eliminado_por"),
-    pool.query("SELECT tecnico, trabajo_iniciado_at, trabajo_terminado_at FROM unidades_entregadas WHERE tecnico <> '' AND trabajo_iniciado_at IS NOT NULL AND trabajo_terminado_at IS NOT NULL"),
+    suc
+      ? pool.query("SELECT h.actor AS nombre, COUNT(*)::int AS n, MAX(h.created_at) AS ultima FROM etapa_historial h JOIN ots o ON o.id=h.ot_id WHERE h.actor <> '' AND o.sucursal = ANY($1::text[]) GROUP BY h.actor", [suc])
+      : pool.query("SELECT actor AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM etapa_historial WHERE actor <> '' GROUP BY actor"),
+    suc
+      ? pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(updated_at) AS ultima FROM ots WHERE creado_por <> '' AND sucursal = ANY($1::text[]) GROUP BY creado_por", [suc])
+      : pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(updated_at) AS ultima FROM ots WHERE creado_por <> '' GROUP BY creado_por"),
+    suc
+      ? pool.query("SELECT tecnico AS nombre, COUNT(*)::int AS n, MAX(fecha_entrega) AS ultima FROM unidades_entregadas WHERE tecnico <> '' AND sucursal = ANY($1::text[]) GROUP BY tecnico", [suc])
+      : pool.query("SELECT tecnico AS nombre, COUNT(*)::int AS n, MAX(fecha_entrega) AS ultima FROM unidades_entregadas WHERE tecnico <> '' GROUP BY tecnico"),
+    suc
+      ? pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM citas WHERE creado_por <> '' AND sucursal = ANY($1::text[]) GROUP BY creado_por", [suc])
+      : pool.query("SELECT creado_por AS nombre, COUNT(*)::int AS n, MAX(created_at) AS ultima FROM citas WHERE creado_por <> '' GROUP BY creado_por"),
+    suc
+      ? pool.query("SELECT eliminado_por AS nombre, COUNT(*)::int AS n, MAX(eliminado_en) AS ultima FROM ots_eliminadas WHERE eliminado_por <> '' AND sucursal = ANY($1::text[]) GROUP BY eliminado_por", [suc])
+      : pool.query("SELECT eliminado_por AS nombre, COUNT(*)::int AS n, MAX(eliminado_en) AS ultima FROM ots_eliminadas WHERE eliminado_por <> '' GROUP BY eliminado_por"),
+    suc
+      ? pool.query("SELECT tecnico, trabajo_iniciado_at, trabajo_terminado_at FROM unidades_entregadas WHERE tecnico <> '' AND trabajo_iniciado_at IS NOT NULL AND trabajo_terminado_at IS NOT NULL AND sucursal = ANY($1::text[])", [suc])
+      : pool.query("SELECT tecnico, trabajo_iniciado_at, trabajo_terminado_at FROM unidades_entregadas WHERE tecnico <> '' AND trabajo_iniciado_at IS NOT NULL AND trabajo_terminado_at IS NOT NULL"),
   ]);
 
   // Promedio de horas de trabajo (inicio → término) por técnico, solo con unidades donde
@@ -1920,17 +1963,26 @@ app.get("/api/reportes/uso-usuarios-excel", requireAuth, requireAdmin, async (re
 // cambios de etapa que pasan por encima de "Esperando asignación", "En trabajo", "Lavado" o
 // "Entrega" sin detenerse ahí. Se calcula sobre etapa_historial, que ya registra cada cambio con
 // quién lo hizo — igual que el resto de los reportes de uso.
-app.get("/api/reportes/etapas-saltadas-excel", requireAuth, requireAdmin, async (req, res) => {
+app.get("/api/reportes/etapas-saltadas-excel", requireAuth, requireAdminOJefeTaller, async (req, res) => {
+  const acc = await currentUserAccess(req);
   const ETAPAS_CLAVE = ["Esperando asignación", "En trabajo", "Lavado", "Entrega"]
     .map(nombre => ({ nombre, idx: STAGES.indexOf(nombre) }))
     .filter(e => e.idx !== -1);
 
-  const { rows } = await pool.query(
-    `SELECT h.actor, h.etapa_anterior, h.etapa_nueva, h.origen, h.created_at, o.numero
-     FROM etapa_historial h JOIN ots o ON o.id = h.ot_id
-     WHERE h.etapa_anterior IS NOT NULL AND h.etapa_nueva > h.etapa_anterior + 1
-     ORDER BY h.created_at`
-  );
+  const { rows } = acc.veTodasSucursales
+    ? await pool.query(
+        `SELECT h.actor, h.etapa_anterior, h.etapa_nueva, h.origen, h.created_at, o.numero
+         FROM etapa_historial h JOIN ots o ON o.id = h.ot_id
+         WHERE h.etapa_anterior IS NOT NULL AND h.etapa_nueva > h.etapa_anterior + 1
+         ORDER BY h.created_at`
+      )
+    : await pool.query(
+        `SELECT h.actor, h.etapa_anterior, h.etapa_nueva, h.origen, h.created_at, o.numero
+         FROM etapa_historial h JOIN ots o ON o.id = h.ot_id
+         WHERE h.etapa_anterior IS NOT NULL AND h.etapa_nueva > h.etapa_anterior + 1 AND o.sucursal = ANY($1::text[])
+         ORDER BY h.created_at`,
+        [acc.sucursalesAccesibles]
+      );
 
   // Por cada salto, se determina cuáles de las 4 etapas clave quedaron "saltadas" (el cambio
   // arrancó antes de esa etapa y llegó después de ella, sin pasar por ahí).
@@ -1996,7 +2048,8 @@ function esSubordenExcluida(numeroOt) {
 // Excel descargable, solo Administrador: compara la base de atenciones de otro sistema (ej.
 // Dynamics) contra las OT ya registradas en la app, para encontrar unidades atendidas que NUNCA
 // se ingresaron acá — el caso de un cliente sin cita previa, que hoy no queda cubierto por nada.
-app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin, async (req, res) => {
+app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdminOJefeTaller, async (req, res) => {
+  const acc = await currentUserAccess(req);
   const { fileBase64, desde, hasta } = req.body || {};
   if (!fileBase64) return res.status(400).json({ error: "Falta el archivo" });
   if (!desde || !hasta) return res.status(400).json({ error: "Faltan las fechas desde/hasta" });
@@ -2038,6 +2091,10 @@ app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin
 
     const sucursal = GRUPO_RECURSOS_A_SUCURSAL[normalizarHeader(get("grupoRecursos"))];
     if (!sucursal) { excluidasPorGrupo++; continue; }
+    // Si no es Administrador, se descartan las filas de sucursales que no le corresponden — así
+    // un Jefe de taller solo ve la comparativa de su propia sucursal, aunque el archivo traiga
+    // el histórico completo de todas.
+    if (!acc.veTodasSucursales && !acc.sucursalesAccesibles.includes(sucursal)) { excluidasPorGrupo++; continue; }
 
     if (esSubordenExcluida(get("otExterna"))) { excluidasPorSuborden++; continue; }
 
@@ -2135,12 +2192,18 @@ app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin
 // adaptar nada. Rut y Descripción quedan vacías: la app no las guarda tal cual las trae el Excel
 // original (Descripción se traduce a un tipo de trabajo interno al importar, y Rut no se guarda).
 app.get("/api/reportes/no-show-excel", requireAuth, requireAdminOContactCenter, async (req, res) => {
+  const acc = await currentUserAccess(req);
   const { desde, hasta } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: "Faltan los parámetros desde/hasta" });
-  const { rows } = await pool.query(
-    "SELECT * FROM citas WHERE estado='no_show' AND fecha_hora >= $1 AND fecha_hora < $2::date + interval '1 day' ORDER BY sucursal, fecha_hora",
-    [desde, hasta]
-  );
+  const { rows } = acc.veTodasSucursales
+    ? await pool.query(
+        "SELECT * FROM citas WHERE estado='no_show' AND fecha_hora >= $1 AND fecha_hora < $2::date + interval '1 day' ORDER BY sucursal, fecha_hora",
+        [desde, hasta]
+      )
+    : await pool.query(
+        "SELECT * FROM citas WHERE estado='no_show' AND fecha_hora >= $1 AND fecha_hora < $2::date + interval '1 day' AND sucursal = ANY($3::text[]) ORDER BY sucursal, fecha_hora",
+        [desde, hasta, acc.sucursalesAccesibles]
+      );
   const si = (v) => v ? "SI" : "NO";
   const aoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Cliente", "Rut", "Marca/Modelo", "PPU", "Fono", "Descripción", "Lo espera", "FIR", "Ruta", "Campaña"]];
   rows.forEach(c => {
