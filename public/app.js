@@ -97,16 +97,18 @@ async function savePassword(){
 function enterApp(){
   document.getElementById("userInfo").textContent = `${currentUser.nombre} · ${currentUser.rol}${currentUser.sucursal ? " · "+currentUser.sucursal : ""}`;
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
-  document.getElementById("reportesBtn").style.display = (currentUser.rol === "Administrador" || currentUser.rol === "Contact Center") ? "inline-block" : "none";
+  // TEMPORAL: Jefe de taller queda pausado por ahora (se activa esta noche) — de momento solo
+  // Administrador y Contact Center ven el botón de Reportes.
+  document.getElementById("reportesBtn").style.display = ["Administrador", "Contact Center"].includes(currentUser.rol) ? "inline-block" : "none";
   const puedeBuscarExportar = ["Jefe de taller", "Torre de control", "Administrador"].includes(currentUser.rol);
   document.getElementById("buscadorTableroBox").style.display = puedeBuscarExportar ? "flex" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   document.getElementById("citasBtn").style.display = ["Mecánico","Lavado y entrega"].includes(currentUser.rol) ? "none" : "inline-block";
-  document.getElementById("newBtn").style.display = currentUser.rol === "Contact Center" ? "none" : "inline-block";
+  document.getElementById("newBtn").style.display = ["Contact Center","Visita"].includes(currentUser.rol) ? "none" : "inline-block";
   // La sucursal del usuario es mandante: el filtro solo tiene sentido si puede ver más de una
-  // (Administrador y Contact Center ven todas; Rancagua también ve Rancagua DyP) — si solo ve
-  // la suya, no aporta nada.
-  const veTodas = currentUser.rol === "Administrador" || currentUser.rol === "Contact Center";
+  // (Administrador, Contact Center y Visita ven todas; Rancagua también ve Rancagua DyP) — si
+  // solo ve la suya, no aporta nada.
+  const veTodas = ["Administrador","Contact Center","Visita"].includes(currentUser.rol);
   const accesiblesOt = veTodas ? SUCURSALES_OT : (currentUser.sucursalesAccesibles || [currentUser.sucursal]);
   document.getElementById("filterSucursal").style.display = accesiblesOt.length > 1 ? "inline-block" : "none";
   document.getElementById("citasFilterSucursal").style.display = veTodas ? "inline-block" : "none";
@@ -396,7 +398,7 @@ function openEdit(id){
   document.getElementById("fotosGrid").innerHTML = "";
   loadFotos();
 
-  const soloLectura = currentUser.rol === "Contact Center";
+  const soloLectura = ["Contact Center","Visita"].includes(currentUser.rol);
   if(soloLectura){
     document.getElementById("modalTitle").textContent = "Ver OT (solo lectura)";
     document.getElementById("deleteBtn").style.display = "none";
@@ -896,15 +898,20 @@ let repDetalleCache = [];
 function openReportes(){
   document.getElementById("appScreen").style.display = "none";
   document.getElementById("reportesScreen").style.display = "block";
-  const esAdmin = currentUser.rol === "Administrador";
-  document.getElementById("reportesAdminSoloControls").style.display = esAdmin ? "contents" : "none";
-  document.getElementById("reportesEtapasBloque").style.display = esAdmin ? "block" : "none";
+  // TEMPORAL: por ahora solo Administrador ve los 6 reportes completos (Jefe de taller se activa
+  // esta noche) — Contact Center sigue viendo solo el de No-Show.
+  const veTodo = currentUser.rol === "Administrador";
+  document.getElementById("reportesAdminSoloControls").style.display = veTodo ? "contents" : "none";
+  document.getElementById("reportesEtapasBloque").style.display = veTodo ? "block" : "none";
+  document.getElementById("repSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
   const hoy = new Date();
   const hace30 = new Date(); hace30.setDate(hace30.getDate()-30);
   document.getElementById("noShowDesde").value = hace30.toISOString().slice(0,10);
   document.getElementById("noShowHasta").value = hoy.toISOString().slice(0,10);
-  document.getElementById("reportesSub").textContent = esAdmin ? "Solo visible para el rol Administrador" : "Reporte de No-Show — Administrador y Contact Center";
-  if(esAdmin){
+  document.getElementById("reportesSub").textContent = veTodo
+    ? (currentUser.rol === "Jefe de taller" ? "Acotado a tu sucursal (" + currentUser.sucursal + ")" : "Solo visible para el rol Administrador")
+    : "Reporte de No-Show — Administrador y Contact Center";
+  if(veTodo){
     document.getElementById("repHasta").value = hoy.toISOString().slice(0,10);
     document.getElementById("repDesde").value = hace30.toISOString().slice(0,10);
     document.getElementById("comparativaDesde").value = hoy.toISOString().slice(0,10);
