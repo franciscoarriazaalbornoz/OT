@@ -304,10 +304,8 @@ async function requireAdmin(req, res, next) {
 // (es de solo lectura en todo lo demás, pero este reporte puntual sí lo necesita).
 async function requireAdminOContactCenter(req, res, next) {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
-  // TEMPORAL: Jefe de taller queda pausado por ahora en este reporte también (se activa esta
-  // noche, junto con el resto del despliegue de reportes por sucursal).
-  if (!rows[0] || !["Administrador", "Contact Center"].includes(rows[0].rol)) {
-    return res.status(403).json({ error: "Solo Administrador o Contact Center" });
+  if (!rows[0] || !["Administrador", "Contact Center", "Jefe de taller"].includes(rows[0].rol)) {
+    return res.status(403).json({ error: "Solo Administrador, Contact Center o Jefe de taller" });
   }
   next();
 }
@@ -315,12 +313,10 @@ async function requireAdminOContactCenter(req, res, next) {
 // Para los 6 reportes: además de Administrador (que ve todas las sucursales), Jefe de taller
 // también puede descargarlos — pero cada uno queda acotado a su propia sucursal (el filtrado
 // real va dentro de cada endpoint, usando currentUserAccess; esto solo controla quién entra).
-// TEMPORAL: la parte de Jefe de taller queda pausada por ahora (se activa esta noche, junto con
-// el resto del despliegue) — de momento solo Administrador pasa.
 async function requireAdminOJefeTaller(req, res, next) {
   const { rows } = await pool.query("SELECT * FROM users WHERE id=$1", [req.session.userId]);
-  if (!rows[0] || rows[0].rol !== "Administrador") {
-    return res.status(403).json({ error: "Solo Administrador" });
+  if (!rows[0] || (rows[0].rol !== "Administrador" && rows[0].rol !== "Jefe de taller")) {
+    return res.status(403).json({ error: "Solo Administrador o Jefe de taller" });
   }
   next();
 }
