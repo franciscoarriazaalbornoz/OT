@@ -97,9 +97,7 @@ async function savePassword(){
 function enterApp(){
   document.getElementById("userInfo").textContent = `${currentUser.nombre} · ${currentUser.rol}${currentUser.sucursal ? " · "+currentUser.sucursal : ""}`;
   document.getElementById("usersBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
-  // TEMPORAL: Jefe de taller queda pausado por ahora (se activa esta noche) — de momento solo
-  // Administrador y Contact Center ven el botón de Reportes.
-  document.getElementById("reportesBtn").style.display = ["Administrador", "Contact Center"].includes(currentUser.rol) ? "inline-block" : "none";
+  document.getElementById("reportesBtn").style.display = ["Administrador", "Contact Center", "Jefe de taller"].includes(currentUser.rol) ? "inline-block" : "none";
   const puedeBuscarExportar = ["Jefe de taller", "Torre de control", "Administrador"].includes(currentUser.rol);
   document.getElementById("buscadorTableroBox").style.display = puedeBuscarExportar ? "flex" : "none";
   document.getElementById("citasConfigExcelBtn").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
@@ -898,9 +896,9 @@ let repDetalleCache = [];
 function openReportes(){
   document.getElementById("appScreen").style.display = "none";
   document.getElementById("reportesScreen").style.display = "block";
-  // TEMPORAL: por ahora solo Administrador ve los 6 reportes completos (Jefe de taller se activa
-  // esta noche) — Contact Center sigue viendo solo el de No-Show.
-  const veTodo = currentUser.rol === "Administrador";
+  // Administrador y Jefe de taller ven los 6 reportes (Jefe de taller queda acotado a su propia
+  // sucursal por el servidor, no acá) — Contact Center sigue viendo solo el de No-Show.
+  const veTodo = currentUser.rol === "Administrador" || currentUser.rol === "Jefe de taller";
   document.getElementById("reportesAdminSoloControls").style.display = veTodo ? "contents" : "none";
   document.getElementById("reportesEtapasBloque").style.display = veTodo ? "block" : "none";
   document.getElementById("repSucursal").style.display = currentUser.rol === "Administrador" ? "inline-block" : "none";
@@ -910,7 +908,7 @@ function openReportes(){
   document.getElementById("noShowHasta").value = hoy.toISOString().slice(0,10);
   document.getElementById("reportesSub").textContent = veTodo
     ? (currentUser.rol === "Jefe de taller" ? "Acotado a tu sucursal (" + currentUser.sucursal + ")" : "Solo visible para el rol Administrador")
-    : "Reporte de No-Show — Administrador y Contact Center";
+    : "Reporte de No-Show — Administrador, Jefe de taller y Contact Center";
   if(veTodo){
     document.getElementById("repHasta").value = hoy.toISOString().slice(0,10);
     document.getElementById("repDesde").value = hace30.toISOString().slice(0,10);
