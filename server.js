@@ -2185,8 +2185,9 @@ app.post("/api/reportes/comparativa-atenciones-excel", requireAuth, requireAdmin
 // Excel descargable, Administrador o Contact Center: el detalle de citas "No llegó" en un rango
 // de fechas, con el mismo esquema de columnas que se usa para CARGAR el Excel de citas a la app
 // (Detalle citas) — así se puede reimportar, cruzar o reconciliar fuera de la app sin tener que
-// adaptar nada. Rut y Descripción quedan vacías: la app no las guarda tal cual las trae el Excel
-// original (Descripción se traduce a un tipo de trabajo interno al importar, y Rut no se guarda).
+// adaptar nada. Rut queda vacío (la app no lo guarda). Descripción se rellena con el tipo de
+// trabajo interno (Mantención, FIR, etc.) en vez del texto libre original, que tampoco se guarda
+// tal cual venía en el Excel de carga.
 app.get("/api/reportes/no-show-excel", requireAuth, requireAdminOContactCenter, async (req, res) => {
   const acc = await currentUserAccess(req);
   const { desde, hasta } = req.query;
@@ -2201,13 +2202,14 @@ app.get("/api/reportes/no-show-excel", requireAuth, requireAdminOContactCenter, 
         [desde, hasta, acc.sucursalesAccesibles]
       );
   const si = (v) => v ? "SI" : "NO";
+  const tipoLabel = (v) => (TIPOS_TRABAJO.find(t => t.value === v) || {}).label || v || "";
   const aoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Cliente", "Rut", "Marca/Modelo", "PPU", "Fono", "Descripción", "Lo espera", "FIR", "Ruta", "Campaña"]];
   rows.forEach(c => {
     const f = new Date(c.fecha_hora);
     aoa.push([
       f.toLocaleDateString("es-CL"), f.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }),
       c.sucursal, c.numero_cita || "", c.cliente || "", "", c.modelo || "", c.patente || "", c.telefono || "",
-      "", si(c.cliente_espera), si(c.tipo === "fir"), si(c.prueba_ruta), si(c.unidad_campana)
+      tipoLabel(c.tipo), si(c.cliente_espera), si(c.tipo === "fir"), si(c.prueba_ruta), si(c.unidad_campana)
     ]);
   });
   const wb5 = XLSX.utils.book_new();
