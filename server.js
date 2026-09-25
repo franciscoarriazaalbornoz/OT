@@ -579,8 +579,57 @@ app.get("/api/ots/exportar-excel", requireAuth, async (req, res) => {
       o.fechaEntrega ? new Date(o.fechaEntrega).toLocaleString("es-CL") : ""
     ]);
   });
+  // Hoja "Inventario": mismo listado pero en el formato institucional de inventario de
+  // unidades en sucursal (planilla que Francisco ya usa aparte). Incluye TODAS las unidades del
+  // tablero, incluidas las que están en "Entrega" — siguen físicamente en la sucursal hasta que
+  // el cliente retira. "Tipo" usa la codificación numérica de ese formato (distinta a los tipos
+  // de trabajo de la app): 1 Mantención, 2 Trabajos Generales, 3 Garantía de Fábrica, 4 Campaña,
+  // 5 Cía de Seguro, 6 Reclamo. Como "garantia" es una sola categoría en la app (cubre
+  // Garantía/Campaña/Primer servicio), se distingue por palabra clave en las notas: si dicen
+  // "CAMPAÑA" es Campaña (4), si no, Garantía de Fábrica (3) por defecto. "Fecha Término
+  // Reparación" y "Fecha Estimada Entrega" usan ambas la fecha de entrega programada de la OT
+  // (hoy la app solo registra una fecha de entrega, no dos hitos separados).
+  const TIPO_INVENTARIO_LEGEND = [
+    [1, "Mantencion"], [2, "Trabajos Generales"], [3, "Garantia de Fabrica"],
+    [4, "Campaña"], [5, "Cia de Seguro"], [6, "Reclamo"],
+  ];
+  const tipoInventario = (o) => {
+    switch (o.tipo) {
+      case "mantencion": return 1;
+      case "general": return 2;
+      case "garantia": return /CAMPAÑA/i.test(o.notas || "") ? 4 : 3;
+      case "dyp": return 5;
+      case "fir": return 6;
+      default: return 2;
+    }
+  };
+  const otsInventario = otsFiltradas;
+  const sucursalInventario = sucursal || (acc.veTodasSucursales ? "Todas las sucursales" : (acc.sucursalesAccesibles[0] || ""));
+  const aoaInv = [
+    ["            INVENTARIO DE UNIDADES      ", "", "", "", "", "Sucursal", sucursalInventario, "Fecha", new Date().toLocaleDateString("es-CL"), "", "", "", ""],
+    ["N°", "Patente", "Ot", "F. de ingreso", "Tipo", "Trabajo", "Comentarios", "Cliente", "Fecha Término Reparación", "Fecha Estimada Entrega"],
+  ];
+  otsInventario.forEach((o, i) => {
+    const fechaEntregaFmt = o.fechaEntrega ? new Date(o.fechaEntrega).toLocaleDateString("es-CL") : "";
+    aoaInv.push([
+      i + 1, o.patente || "", o.numero || "",
+      o.fechaIngreso ? new Date(o.fechaIngreso + "T00:00:00").toLocaleDateString("es-CL") : "",
+      tipoInventario(o), STAGES[o.etapa] || "", o.notas || "", o.cliente || "",
+      fechaEntregaFmt, fechaEntregaFmt,
+    ]);
+  });
+  const wsInv = XLSX.utils.aoa_to_sheet(aoaInv);
+  wsInv["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },   // A1:E1 título
+    { s: { r: 0, c: 8 }, e: { r: 0, c: 9 } },   // I1:J1 fecha
+  ];
+  TIPO_INVENTARIO_LEGEND.forEach(([num, label], i) => {
+    XLSX.utils.sheet_add_aoa(wsInv, [[num, label]], { origin: { r: i + 1, c: 11 } }); // L/M, filas 2-7
+  });
+
   const wb6 = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb6, XLSX.utils.aoa_to_sheet(aoa), "Tablero de OT");
+  XLSX.utils.book_append_sheet(wb6, wsInv, "Inventario");
   const buffer6 = XLSX.write(wb6, { type: "buffer", bookType: "xlsx" });
 
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
