@@ -614,7 +614,7 @@ app.get("/api/ots/exportar-excel", requireAuth, async (req, res) => {
     aoaInv.push([
       i + 1, o.patente || "", o.numero || "",
       o.fechaIngreso ? new Date(o.fechaIngreso + "T00:00:00").toLocaleDateString("es-CL") : "",
-      tipoInventario(o), STAGES[o.etapa] || "", o.notas || "", o.cliente || "",
+      tipoInventario(o), tipoLabel(o.tipo), STAGES[o.etapa] || "", o.cliente || "",
       fechaEntregaFmt, fechaEntregaFmt,
     ]);
   });
@@ -2298,4 +2298,4 @@ initDb()
   .catch(err => {
     console.error("No se pudo inicializar la base de datos:", err.message);
     process.exit(1);
-  });
+  
