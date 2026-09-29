@@ -76,6 +76,36 @@ function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.rand
 // Nunca se aplica a campos de lista fija (sucursal, tipo, rol, etc.) para no romper su coincidencia.
 function up(v) { return v === undefined || v === null ? v : String(v).toUpperCase(); }
 
+// Helpers de días hábiles (lunes a viernes, sin calendario de feriados) para el cruce
+// No-Show -> reactivación. Trabajan solo con la fecha (sin hora).
+function soloFecha(d) {
+  const x = new Date(d);
+  return new Date(x.getFullYear(), x.getMonth(), x.getDate());
+}
+function sumarDiasHabiles(fechaBase, dias) {
+  const d = soloFecha(fechaBase);
+  let agregados = 0;
+  while (agregados < dias) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) agregados++;
+  }
+  return d;
+}
+// Días hábiles contados estrictamente hacia adelante desde "desde" (exclusive) hasta "hasta"
+// (inclusive). Si ambas fechas son el mismo día, devuelve 0.
+function diasHabilesEntre(desde, hasta) {
+  let d = soloFecha(desde);
+  const fin = soloFecha(hasta);
+  let dias = 0;
+  while (d < fin) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) dias++;
+  }
+  return dias;
+}
+
 async function logCambioEtapa(otId, etapaAnterior, etapaNueva, actor, origen) {
   await pool.query(
     "INSERT INTO etapa_historial (id, ot_id, etapa_anterior, etapa_nueva, actor, origen, created_at) VALUES ($1,$2,$3,$4,$5,$6, now())",
@@ -579,57 +609,8 @@ app.get("/api/ots/exportar-excel", requireAuth, async (req, res) => {
       o.fechaEntrega ? new Date(o.fechaEntrega).toLocaleString("es-CL") : ""
     ]);
   });
-  // Hoja "Inventario": mismo listado pero en el formato institucional de inventario de
-  // unidades en sucursal (planilla que Francisco ya usa aparte). Incluye TODAS las unidades del
-  // tablero, incluidas las que están en "Entrega" — siguen físicamente en la sucursal hasta que
-  // el cliente retira. "Tipo" usa la codificación numérica de ese formato (distinta a los tipos
-  // de trabajo de la app): 1 Mantención, 2 Trabajos Generales, 3 Garantía de Fábrica, 4 Campaña,
-  // 5 Cía de Seguro, 6 Reclamo. Como "garantia" es una sola categoría en la app (cubre
-  // Garantía/Campaña/Primer servicio), se distingue por palabra clave en las notas: si dicen
-  // "CAMPAÑA" es Campaña (4), si no, Garantía de Fábrica (3) por defecto. "Fecha Término
-  // Reparación" y "Fecha Estimada Entrega" usan ambas la fecha de entrega programada de la OT
-  // (hoy la app solo registra una fecha de entrega, no dos hitos separados).
-  const TIPO_INVENTARIO_LEGEND = [
-    [1, "Mantencion"], [2, "Trabajos Generales"], [3, "Garantia de Fabrica"],
-    [4, "Campaña"], [5, "Cia de Seguro"], [6, "Reclamo"],
-  ];
-  const tipoInventario = (o) => {
-    switch (o.tipo) {
-      case "mantencion": return 1;
-      case "general": return 2;
-      case "garantia": return /CAMPAÑA/i.test(o.notas || "") ? 4 : 3;
-      case "dyp": return 5;
-      case "fir": return 6;
-      default: return 2;
-    }
-  };
-  const otsInventario = otsFiltradas;
-  const sucursalInventario = sucursal || (acc.veTodasSucursales ? "Todas las sucursales" : (acc.sucursalesAccesibles[0] || ""));
-  const aoaInv = [
-    ["            INVENTARIO DE UNIDADES      ", "", "", "", "", "Sucursal", sucursalInventario, "Fecha", new Date().toLocaleDateString("es-CL"), "", "", "", ""],
-    ["N°", "Patente", "Ot", "F. de ingreso", "Tipo", "Trabajo", "Comentarios", "Cliente", "Fecha Término Reparación", "Fecha Estimada Entrega"],
-  ];
-  otsInventario.forEach((o, i) => {
-    const fechaEntregaFmt = o.fechaEntrega ? new Date(o.fechaEntrega).toLocaleDateString("es-CL") : "";
-    aoaInv.push([
-      i + 1, o.patente || "", o.numero || "",
-      o.fechaIngreso ? new Date(o.fechaIngreso + "T00:00:00").toLocaleDateString("es-CL") : "",
-      tipoInventario(o), tipoLabel(o.tipo), STAGES[o.etapa] || "", o.cliente || "",
-      fechaEntregaFmt, fechaEntregaFmt,
-    ]);
-  });
-  const wsInv = XLSX.utils.aoa_to_sheet(aoaInv);
-  wsInv["!merges"] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },   // A1:E1 título
-    { s: { r: 0, c: 8 }, e: { r: 0, c: 9 } },   // I1:J1 fecha
-  ];
-  TIPO_INVENTARIO_LEGEND.forEach(([num, label], i) => {
-    XLSX.utils.sheet_add_aoa(wsInv, [[num, label]], { origin: { r: i + 1, c: 11 } }); // L/M, filas 2-7
-  });
-
   const wb6 = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb6, XLSX.utils.aoa_to_sheet(aoa), "Tablero de OT");
-  XLSX.utils.book_append_sheet(wb6, wsInv, "Inventario");
   const buffer6 = XLSX.write(wb6, { type: "buffer", bookType: "xlsx" });
 
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -2250,15 +2231,93 @@ app.get("/api/reportes/no-show-excel", requireAuth, requireAdminOContactCenter, 
         "SELECT * FROM citas WHERE estado='no_show' AND fecha_hora >= $1 AND fecha_hora < $2::date + interval '1 day' AND sucursal = ANY($3::text[]) ORDER BY sucursal, fecha_hora",
         [desde, hasta, acc.sucursalesAccesibles]
       );
+
+  // Ventana de reactivación: 10 días hábiles desde la fecha de cada No-Show. Para acotar la
+  // consulta se usa un margen amplio en días corridos (10 hábiles caben siempre en 16 corridos)
+  // sobre el rango completo de fechas del reporte.
+  const patentesNorm = [...new Set(rows.map(c => up(String(c.patente || "").trim()).replace(/-/g, "")).filter(Boolean))];
+  let otsPorPatente = new Map();
+  let citasPorPatente = new Map();
+  if (patentesNorm.length > 0) {
+    const otsQuery = acc.veTodasSucursales
+      ? await pool.query(
+          `SELECT numero, patente, fecha_ingreso FROM ots
+           WHERE patente <> '' AND fecha_ingreso IS NOT NULL
+             AND REPLACE(UPPER(patente), '-', '') = ANY($1::text[])
+             AND fecha_ingreso >= $2::date AND fecha_ingreso <= $3::date + interval '16 day'`,
+          [patentesNorm, desde, hasta]
+        )
+      : await pool.query(
+          `SELECT numero, patente, fecha_ingreso FROM ots
+           WHERE patente <> '' AND fecha_ingreso IS NOT NULL
+             AND REPLACE(UPPER(patente), '-', '') = ANY($1::text[])
+             AND fecha_ingreso >= $2::date AND fecha_ingreso <= $3::date + interval '16 day'
+             AND sucursal = ANY($4::text[])`,
+          [patentesNorm, desde, hasta, acc.sucursalesAccesibles]
+        );
+    otsQuery.rows.forEach(o => {
+      const pn = up(String(o.patente || "").trim()).replace(/-/g, "");
+      if (!otsPorPatente.has(pn)) otsPorPatente.set(pn, []);
+      otsPorPatente.get(pn).push(o);
+    });
+
+    const citasQuery = await pool.query(
+      `SELECT id, patente, fecha_hora, estado, numero_cita, sucursal FROM citas
+       WHERE patente <> '' AND REPLACE(UPPER(patente), '-', '') = ANY($1::text[])`,
+      [patentesNorm]
+    );
+    citasQuery.rows.forEach(c => {
+      const pn = up(String(c.patente || "").trim()).replace(/-/g, "");
+      if (!citasPorPatente.has(pn)) citasPorPatente.set(pn, []);
+      citasPorPatente.get(pn).push(c);
+    });
+  }
+
+  const estadoLabel = (v) => ({ pendiente: "Pendiente", convertida: "Convertida", no_show: "No llegó" }[v] || v || "");
+
   const si = (v) => v ? "SI" : "NO";
   const tipoLabel = (v) => (TIPOS_TRABAJO.find(t => t.value === v) || {}).label || v || "";
-  const aoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Cliente", "Rut", "Marca/Modelo", "PPU", "Fono", "Descripción", "Lo espera", "FIR", "Ruta", "Campaña"]];
+  const aoa = [["Fecha", "Hora", "Sucursal", "N° Cita", "Cliente", "Rut", "Marca/Modelo", "PPU", "Fono", "Descripción", "Lo espera", "FIR", "Ruta", "Campaña", "Recepcionada", "Días hábiles hasta recepción", "N° OT reactivación", "Alerta: otra cita distinta"]];
   rows.forEach(c => {
     const f = new Date(c.fecha_hora);
+    const pn = up(String(c.patente || "").trim()).replace(/-/g, "");
+
+    // Reactivación: la OT más antigua con la misma patente, con fecha de ingreso desde el día
+    // del No-Show en adelante y dentro de los 10 días hábiles siguientes.
+    let recepcionada = "NO", diasHabiles = "", otEncontrada = "";
+    if (pn) {
+      const limite = sumarDiasHabiles(f, 10);
+      const candidatas = (otsPorPatente.get(pn) || [])
+        .filter(o => {
+          const fi = soloFecha(o.fecha_ingreso);
+          return fi >= soloFecha(f) && fi <= limite;
+        })
+        .sort((a, b) => new Date(a.fecha_ingreso) - new Date(b.fecha_ingreso));
+      if (candidatas.length > 0) {
+        recepcionada = "SI";
+        diasHabiles = diasHabilesEntre(f, candidatas[0].fecha_ingreso);
+        otEncontrada = candidatas[0].numero || "";
+      }
+    }
+
+    // Alerta: existe otra cita (distinta a esta) con la misma patente, de cualquier estado.
+    let alerta = "";
+    if (pn) {
+      const otras = (citasPorPatente.get(pn) || []).filter(o => o.id !== c.id);
+      if (otras.length > 0) {
+        otras.sort((a, b) => new Date(a.fecha_hora) - new Date(b.fecha_hora));
+        alerta = otras.map(o => {
+          const of = new Date(o.fecha_hora);
+          return `${o.numero_cita ? "N°" + o.numero_cita + " " : ""}${of.toLocaleDateString("es-CL")} (${estadoLabel(o.estado)})`;
+        }).join(" / ");
+      }
+    }
+
     aoa.push([
       f.toLocaleDateString("es-CL"), f.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }),
       c.sucursal, c.numero_cita || "", c.cliente || "", "", c.modelo || "", c.patente || "", c.telefono || "",
-      tipoLabel(c.tipo), si(c.cliente_espera), si(c.tipo === "fir"), si(c.prueba_ruta), si(c.unidad_campana)
+      tipoLabel(c.tipo), si(c.cliente_espera), si(c.tipo === "fir"), si(c.prueba_ruta), si(c.unidad_campana),
+      recepcionada, diasHabiles, otEncontrada, alerta
     ]);
   });
   const wb5 = XLSX.utils.book_new();
@@ -2298,4 +2357,4 @@ initDb()
   .catch(err => {
     console.error("No se pudo inicializar la base de datos:", err.message);
     process.exit(1);
-  
+  });
